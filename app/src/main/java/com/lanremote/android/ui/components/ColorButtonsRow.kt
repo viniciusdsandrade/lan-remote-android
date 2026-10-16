@@ -9,51 +9,34 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import com.lanremote.android.data.model.TVKey
-import com.lanremote.android.ui.theme.ColorBlue
-import com.lanremote.android.ui.theme.ColorGreen
-import com.lanremote.android.ui.theme.ColorRed
-import com.lanremote.android.ui.theme.ColorYellow
+import com.lanremote.android.ui.help.ControlHelp
+import com.lanremote.android.ui.help.RemoteKeys
 
+/** Vermelho, verde, amarelo e azul: o que cada um faz aparece na TV; segurar explica. */
 @Composable
 fun ColorButtonsRow(
-    onKeyClick: (TVKey) -> Unit,
+    onKey: (TVKey) -> Unit,
+    onExplain: (ControlHelp) -> Unit,
     modifier: Modifier = Modifier
 ) {
     Row(
         modifier = modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(10.dp)
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        RemoteButton(
-            onClick = { onKeyClick(TVKey.RED) },
-            text = "●",
-            backgroundColor = ColorRed,
-            contentColor = Color.White,
-            shapeRadius = 12.dp,
-            modifier = Modifier.weight(1f).height(38.dp)
-        )
-        RemoteButton(
-            onClick = { onKeyClick(TVKey.GREEN) },
-            text = "●",
-            backgroundColor = ColorGreen,
-            contentColor = Color.White,
-            shapeRadius = 12.dp,
-            modifier = Modifier.weight(1f).height(38.dp)
-        )
-        RemoteButton(
-            onClick = { onKeyClick(TVKey.YELLOW) },
-            text = "●",
-            backgroundColor = ColorYellow,
-            contentColor = Color.White,
-            shapeRadius = 12.dp,
-            modifier = Modifier.weight(1f).height(38.dp)
-        )
-        RemoteButton(
-            onClick = { onKeyClick(TVKey.BLUE) },
-            text = "●",
-            backgroundColor = ColorBlue,
-            contentColor = Color.White,
-            shapeRadius = 12.dp,
-            modifier = Modifier.weight(1f).height(38.dp)
-        )
+        RemoteKeys.colors.forEach { key ->
+            val help = RemoteKeys.helpFor(key) ?: return@forEach
+            RemoteButton(
+                help = help,
+                onClick = { onKey(key) },
+                onExplain = onExplain,
+                label = "",
+                icon = null,
+                backgroundColor = help.tint ?: Color.Gray,
+                borderColor = Color.White.copy(alpha = 0.3f),
+                modifier = Modifier
+                    .weight(1f)
+                    .height(48.dp)
+            )
+        }
     }
 }

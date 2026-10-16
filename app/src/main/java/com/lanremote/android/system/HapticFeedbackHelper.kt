@@ -40,6 +40,36 @@ class HapticFeedbackHelper(private val context: Context) {
         vibrate(durationMillis = 8, amplitude = 70, predefinedEffect = VibrationEffect.EFFECT_TICK)
     }
 
+    /**
+     * Dois toques firmes: a ação não aconteceu (ex.: tecla com a TV desligada) ou pede confirmação.
+     */
+    fun performWarning() {
+        pattern(longArrayOf(0, 22, 80, 22), intArrayOf(0, 200, 0, 200))
+    }
+
+    /**
+     * Toque leve seguido de um firme: deu certo (TV ligou, pareamento concluído).
+     */
+    fun performSuccess() {
+        pattern(longArrayOf(0, 14, 70, 26), intArrayOf(0, 110, 0, 255))
+    }
+
+    /**
+     * Três toques firmes: falhou.
+     */
+    fun performError() {
+        pattern(longArrayOf(0, 24, 60, 24, 60, 24), intArrayOf(0, 255, 0, 255, 0, 255))
+    }
+
+    private fun pattern(timings: LongArray, amplitudes: IntArray) {
+        val vib = vibrator ?: return
+        if (!vib.hasVibrator()) return
+
+        try {
+            vib.vibrate(VibrationEffect.createWaveform(timings, amplitudes, -1))
+        } catch (ignored: Exception) {}
+    }
+
     private fun vibrate(durationMillis: Long, amplitude: Int, predefinedEffect: Int) {
         val vib = vibrator ?: return
         if (!vib.hasVibrator()) return

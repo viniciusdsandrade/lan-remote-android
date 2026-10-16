@@ -1,45 +1,110 @@
 # LAN Remote Android (LG NetCast TV)
 
-Aplicativo Android nativo para controle remoto direto pela rede local (LAN) da TV LG NetCast (ex.: 47LN5700), sem servidores intermediários, sem nuvem, com resposta instantânea e feedback háptico.
+Aplicativo Android nativo para controlar pela rede local (LAN) a TV LG NetCast (ex.: 47LN5700), sem servidores intermediários, sem nuvem, com resposta instantânea e feedback háptico. Mesma funcionalidade dos apps de Mac e iOS do projeto.
 
 ---
 
-## 🚀 Tecnologias
+## 🚀 Destaques
 
-- **Linguagem:** Kotlin 2.0+ (K2 compiler, Coroutines & Flow)
-- **Interface UI:** Jetpack Compose + Material 3 (paleta Obsidian/Titanium OLED `#121214`)
-- **Cliente HTTP:** Ktor Client 3.x (Engine CIO)
-- **Descoberta na LAN:** SSDP M-SEARCH (UDP Multicast `239.255.255.250:1900`) com `MulticastLock` e fallback de varredura de sub-rede
-- **Persistência:** Jetpack DataStore Preferences
-- **Feedback Tátil:** Android `Vibrator` / `VibrationEffect` (< 10ms)
-- **Integração com Sistema:**
-  - `TileService` (Quick Settings Tile "TV Mudo" na barra de status superior)
-  - Interceptação de teclas físicas laterais de volume do smartphone (`onKeyDown`)
+- **Liga a TV sem levantar do sofá**: em standby a LG NetCast desliga a rede, então o app acorda a **TV Box** (Android TV / Google TV) ligada no HDMI e ela liga a TV pelo **HDMI-CEC (SIMPLINK)**. Detalhes em [Ligar a TV pelo app](#-ligar-a-tv-pelo-app).
+- **Botões que se explicam**: ícone + nome em português em cada botão, agrupados por função. **Segurar** um botão mostra o que ele faz, sem enviar nada à TV; o **?** abre o **Guia dos botões**. Detalhes em [Botões que se explicam](#-botões-que-se-explicam).
+- **Estado da TV à vista**: `Ligada`, `Desligada`, `Ligando…` ou `Verificando…` no topo, com volume e entrada atual. Com a TV desligada o controle fica esmaecido, nenhuma tecla é enviada e um cartão mostra o botão **Ligar**. Desligar pede confirmação.
+- **Sem mensagens de log na tela**: o retorno é o háptico e o estado da TV.
+- **Botões físicos de volume** do celular controlam a TV (com a TV desligada eles voltam a ser do celular).
+- **Bloco "TV Mudo"** nas Configurações rápidas.
+- **Ícone adaptativo** com o mesmo controle dos ícones do Mac e do iOS, inclusive no ícone temático do Android 13+.
 
----
+## 🧰 Tecnologias
 
-## 📡 Protocolo ROAP & Regras Críticas de Firmware
-
-A TV LG NetCast (firmware 05.02.11) roda o servidor HTTP ROAP na porta `8080`.
-- **Regra Fundamental de User-Agent:** Requisições para `/roap/api/command` que contenham `"UDAP/2.0"` no `User-Agent` são rejeitadas com `HTTP 400 Bad Request`. O cliente Ktor utiliza exclusivamente `lg_roap_control/1.0.0 (android)` com header `Connection: close`.
-- **Fila Serial com Debounce (300ms):** Protege contra perda de pacotes quando botões são pressionados em rajada.
-- **Auto Reautenticação:** Quando a TV reinicia e a sessão expira (retornando `HTTP 401`), o cliente reautentica silenciosamente usando a chave salva.
+- **Kotlin 2.0** (corrotinas e Flow) e **Jetpack Compose** + Material 3
+- **Ktor Client 3** (engine CIO) para o ROAP da TV
+- **Protocolo do controle remoto do Android TV v2** escrito à mão: TLS com certificado de cliente (`SSLSocket`), protobuf mínimo, sem dependências novas
+- **AndroidKeyStore** para a chave e o certificado do app, **NsdManager** para achar a TV Box, UDP para o Wake-on-LAN
+- **DataStore Preferences**, `Vibrator`/`VibrationEffect`, `TileService`
 
 ---
 
-## 🛠️ Como Compilar e Testar
+## 🔌 Ligar a TV pelo app
 
-### Pré-requisitos
-- JDK 17 ou 21 (ex.: Homebrew OpenJDK 21)
-- Android SDK Platform 35 e Build-Tools
+A TV não liga pela rede (em standby o controlador de rede dela desliga; Wake-on-LAN nela não tem efeito). O caminho é a **TV Box Xiaomi** (Android TV / Google TV) ligada no HDMI, que acorda a TV pelo CEC:
 
-### Executar Testes Unitários
+1. O app manda **Wake-on-LAN** para a TV Box: direto para o último IP dela e em **broadcast** (sub-rede do Wi-Fi e `255.255.255.255`), que a acorda mesmo se o IP tiver mudado. Ela dorme fundo, mas a rede volta por alguns segundos (a porta do controle responde em ~1 s).
+2. Nessa janela o app aperta **POWER** pelo protocolo do controle remoto do Android TV (o mesmo do app Google TV: portas 6466/6467, TLS com certificado próprio, mensagens protobuf). Se a tela da TV Box já estava ligada, o app a põe para dormir, espera 3 s e a acorda de novo: só um despertar novo manda o One Touch Play.
+3. Ao acordar, a TV Box manda **One Touch Play** pelo HDMI-CEC: a TV liga, já na entrada dela. A imagem volta em segundos; a rede da TV, em ~40–55 s, e aí o controle volta a responder (o app consulta a TV a cada 1,5 s por até 90 s).
+
+Uma vez só, em **Ajustes › Ligar a TV pelo app**: com a TV ligada na entrada da TV Box, toque em **Parear** e digite o código de 6 caracteres que aparece na tela (o primeiro par é um checksum: um erro de digitação é avisado sem incomodar a TV Box). O app gera uma chave RSA e um certificado no **AndroidKeyStore** (a chave nunca sai dele) e confere a conexão na porta 6466 sem apertar nada. Requisitos:
+
+- **SIMPLINK ligado na TV** (botão SIMPLINK do app, ou Configurações › Opções › SIMPLINK). Sem ele a TV ignora o CEC.
+- **HDMI-CEC ativo na TV Box** (Configurações › Sistema › Entradas).
+- **MAC do Wi-Fi da TV Box**: o Android não lê a tabela ARP, então o app tenta os endereços vizinhos ao MAC Bluetooth anunciado na rede (`bt=` do serviço `_androidtvremote2._tcp`; nesta TV Box o Wi-Fi é o Bluetooth − 1). Se não acordar, digite o MAC em Ajustes (na TV Box: Configurações › Sistema › Sobre › Status).
+- **IP fixo para a TV Box** (reserva DHCP no roteador): dormindo, ela só acorda pelo último endereço conhecido ou pelo broadcast. Com a TV ligada o app atualiza esse endereço pela rede a cada 5 min.
+- **Celular no Wi-Fi de casa**: sem Wi-Fi o app avisa em vez de tentar.
+
+Não adianta usar `KEYCODE_TV_POWER` (177) nem `KEYCODE_WAKEUP` (224): a TV Box Xiaomi ignora os dois.
+
+Detalhe de implementação que vale registrar: no TLS 1.3 a assinatura do cliente é RSA-PSS, mas o Conscrypt aplica o enchimento PSS no BoringSSL e pede ao Keystore a operação RSA crua. Por isso a chave é gerada também com `ENCRYPTION_PADDING_NONE`; sem isso o keystore2 recusa com `INCOMPATIBLE_PADDING_MODE`.
+
+## 🧭 Botões que se explicam
+
+Princípios de usabilidade, os mesmos do Mac e do iOS:
+
+- **reconhecer em vez de lembrar**: ícone + rótulo em português em todo botão (Entrada, Números, Último, Info, Ajuste rápido, Início, Configurações, Voltar, Sair, Programação, Mudo, TV ao vivo, Apps, Formato, 3D, SIMPLINK); reprodução e botões coloridos ficam só com ícone ou cor;
+- **agrupamento por função**: Navegação, Volume e canal, Recursos da TV, Reprodução e Botões coloridos, cada seção com título;
+- **divulgação progressiva**: **segurar** um botão explica o que ele faz, sem enviar nada à TV (o painel embaixo some sozinho em 7 s); o **?** abre o **Guia dos botões** completo;
+- **visibilidade do estado**: Ligada/Desligada/Ligando…, volume e entrada sempre à vista;
+- **prevenção de erro**: confirmar antes de desligar;
+- **linguagem do usuário** em vez das siglas da LG.
+
+Um catálogo único (`ui/help/ControlHelp.kt`) alimenta o botão, o painel, o guia e o **TalkBack**, que lê o título e a explicação de cada controle e oferece a ação "Explicar o botão".
+
+---
+
+## 📡 Protocolo ROAP
+
+A TV LG NetCast (firmware 05.02.11) roda o servidor HTTP ROAP na porta `8080`. Formato validado na TV real:
+
+| Operação | Método | Endpoint | Corpo XML |
+|---|---|---|---|
+| Pedir código na TV | `POST` | `/roap/api/auth` | `<auth><type>AuthKeyReq</type></auth>` |
+| Parear | `POST` | `/roap/api/auth` | `<auth><type>AuthReq</type><value>123456</value></auth>` → `<session>` |
+| Tecla | `POST` | `/roap/api/command` | `<command><session>…</session><type>HandleKeyInput</type><value>20</value></command>` |
+| Volume | `GET` | `/roap/api/data?target=volume_info&session=…` | resposta com `<level>`, `<mute>` |
+| Canal e entrada | `GET` | `/roap/api/data?target=cur_channel&session=…` | resposta com `<inputSourceName>` |
+
+- **User-Agent**: requisições ROAP **não** podem conter `"UDAP/2.0"` (a TV responde `400`). O app usa `lg_roap_control/1.0.0 (android)` com `Connection: close`.
+- **Sessão**: morre quando a TV desliga e liga. Num `401` o app refaz o `AuthReq` com a chave salva, grava a sessão nova e repete a requisição uma vez.
+- **Estado da TV**: qualquer resposta HTTP quer dizer ligada; sem resposta duas vezes seguidas (1,5 s entre elas), desligada.
+- **Intervalo de 300 ms entre teclas**: a TV descarta teclas iguais em rajada.
+
+---
+
+## 🛠️ Como compilar e testar
+
+Pré-requisitos: JDK 21 (ex.: `brew install openjdk@21`) e o Android SDK com a plataforma 35.
+
 ```bash
-./gradlew test
+export JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home
+
+# Testes de unidade, lint e APK debug (o mesmo que o CI roda)
+./gradlew --no-daemon testDebugUnitTest lintDebug assembleDebug
+
+# Instalar no celular (depuração USB ligada) ou no emulador
+./gradlew installDebug
+
+# (opcional) Regenerar o ícone: o mesmo controle dos ícones do Mac e do iOS
+swift scripts/make_app_icon.swift --android app/src/main/res
 ```
 
-### Gerar APK Debug
-```bash
-./gradlew assembleDebug
-```
-O APK final será gerado em `app/build/outputs/apk/debug/app-debug.apk`.
+O APK fica em `app/build/outputs/apk/debug/app-debug.apk`.
+
+No **emulador** a descoberta automática da TV Box não funciona (o mDNS e o broadcast não passam pelo NAT): em Ajustes, digite o IP dela. O ROAP da TV, a conexão TLS com a TV Box e o Wake-on-LAN direto ao IP funcionam.
+
+## 🛡️ CI
+
+O GitHub Actions (`.github/workflows/android-ci.yml`) roda em cada push e pull request para a `main`: confere que nenhuma chave ou certificado (`*.jks`, `*.keystore`, `*.p12`) está versionado, roda os testes de unidade, o lint e gera o APK debug, publicado como artefato.
+
+---
+
+## 📄 Licença
+
+Uso pessoal e livre para automação residencial e controle local.

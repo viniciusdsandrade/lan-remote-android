@@ -14,18 +14,27 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import com.lanremote.android.data.model.TVKey
+import com.lanremote.android.ui.help.ControlHelp
+import com.lanremote.android.ui.help.Help
+import com.lanremote.android.ui.help.RemoteKeys
 import com.lanremote.android.ui.theme.SurfaceBorder
 import com.lanremote.android.ui.theme.SurfaceDark
+import com.lanremote.android.ui.theme.TextPrimary
 
+/** Teclado numérico recolhível: 1 a 9 e, na última linha, Último · 0 · Info. */
 @Composable
 fun NumericKeypad(
     isVisible: Boolean,
-    onKeyClick: (TVKey) -> Unit,
+    onKey: (TVKey) -> Unit,
+    onExplain: (ControlHelp) -> Unit,
     modifier: Modifier = Modifier
 ) {
     AnimatedVisibility(
@@ -34,51 +43,43 @@ fun NumericKeypad(
         exit = fadeOut() + shrinkVertically(),
         modifier = modifier
     ) {
-        val shape = RoundedCornerShape(20.dp)
+        val shape = RoundedCornerShape(16.dp)
         Column(
             modifier = Modifier
                 .fillMaxWidth()
                 .clip(shape)
                 .background(SurfaceDark)
                 .border(1.dp, SurfaceBorder, shape)
-                .padding(12.dp),
+                .padding(10.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            // Row 1: 1, 2, 3
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                RemoteButton(onClick = { onKeyClick(TVKey.NUMBER_1) }, text = "1", modifier = Modifier.weight(1f).height(46.dp))
-                RemoteButton(onClick = { onKeyClick(TVKey.NUMBER_2) }, text = "2", modifier = Modifier.weight(1f).height(46.dp))
-                RemoteButton(onClick = { onKeyClick(TVKey.NUMBER_3) }, text = "3", modifier = Modifier.weight(1f).height(46.dp))
-            }
-            // Row 2: 4, 5, 6
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                RemoteButton(onClick = { onKeyClick(TVKey.NUMBER_4) }, text = "4", modifier = Modifier.weight(1f).height(46.dp))
-                RemoteButton(onClick = { onKeyClick(TVKey.NUMBER_5) }, text = "5", modifier = Modifier.weight(1f).height(46.dp))
-                RemoteButton(onClick = { onKeyClick(TVKey.NUMBER_6) }, text = "6", modifier = Modifier.weight(1f).height(46.dp))
-            }
-            // Row 3: 7, 8, 9
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                RemoteButton(onClick = { onKeyClick(TVKey.NUMBER_7) }, text = "7", modifier = Modifier.weight(1f).height(46.dp))
-                RemoteButton(onClick = { onKeyClick(TVKey.NUMBER_8) }, text = "8", modifier = Modifier.weight(1f).height(46.dp))
-                RemoteButton(onClick = { onKeyClick(TVKey.NUMBER_9) }, text = "9", modifier = Modifier.weight(1f).height(46.dp))
-            }
-            // Row 4: -, 0, Q.View
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                RemoteButton(onClick = { onKeyClick(TVKey.DASH) }, text = "-", modifier = Modifier.weight(1f).height(46.dp))
-                RemoteButton(onClick = { onKeyClick(TVKey.NUMBER_0) }, text = "0", modifier = Modifier.weight(1f).height(46.dp))
-                RemoteButton(onClick = { onKeyClick(TVKey.PREVIOUS_CHANNEL) }, text = "Q.View", modifier = Modifier.weight(1f).height(46.dp))
+            RemoteKeys.keypad.forEach { row ->
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    row.forEach { key ->
+                        val help = RemoteKeys.helpFor(key) ?: Help.digit
+                        if (RemoteKeys.isDigit(key)) {
+                            RemoteButton(
+                                help = help.copy(title = "${key.label}: ${help.title}"),
+                                onClick = { onKey(key) },
+                                onExplain = { onExplain(Help.digit) },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(52.dp)
+                            ) {
+                                Text(key.label, fontSize = 18.sp, fontWeight = FontWeight.Bold, color = TextPrimary)
+                            }
+                        } else {
+                            RemoteButton(
+                                help = help,
+                                onClick = { onKey(key) },
+                                onExplain = onExplain,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(52.dp)
+                            )
+                        }
+                    }
+                }
             }
         }
     }

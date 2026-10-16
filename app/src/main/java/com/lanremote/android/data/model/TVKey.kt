@@ -44,10 +44,14 @@ enum class TVKey(val code: Int, val label: String) {
     LIVE_TV(43, "Live TV"),
     EPG(44, "Guia"),
     INFO(45, "Info"),
+    ASPECT_RATIO(46, "Formato"),
     INPUT(47, "Entrada"),
     PROGRAM_LIST(50, "Lista CH"),
+    KEY_3D(400, "3D"),
     DASH(402, "-"),
-    PREVIOUS_CHANNEL(403, "Q.View"),
-    QUICK_MENU(405, "Q.Menu"),
-    EXIT(412, "Sair")
+    PREVIOUS_CHANNEL(403, "Último canal"),
+    QUICK_MENU(405, "Ajuste rápido"),
+    SIMPLINK(411, "SIMPLINK"),
+    EXIT(412, "Sair"),
+    APPS(417, "Apps")
 }

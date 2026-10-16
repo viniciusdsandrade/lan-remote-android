@@ -1,6 +1,7 @@
 package com.lanremote.android.data.androidtv
 
 import android.annotation.SuppressLint
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -83,23 +84,29 @@ class TlsChannel private constructor(private val socket: SSLSocket) : FramedChan
         private const val ALIAS = "lanremote"
 
         /** Conecta e completa o handshake TLS, em no máximo [timeoutMs] para cada um. */
-        suspend fun open(host: String, port: Int, identity: ClientIdentity, timeoutMs: Int = 6_000): TlsChannel =
-            withContext(Dispatchers.IO) {
-                val context = SSLContext.getInstance("TLS").apply {
-                    init(arrayOf(ClientKeyManager(identity)), arrayOf(TrustTheBox()), null)
-                }
-                val socket = context.socketFactory.createSocket() as SSLSocket
-                try {
+        suspend fun open(host: String, port: Int, identity: ClientIdentity, timeoutMs: Int = 6_000): TlsChannel {
+            val context = SSLContext.getInstance("TLS").apply {
+                init(arrayOf(ClientKeyManager(identity)), arrayOf(TrustTheBox()), null)
+            }
+            val socket = context.socketFactory.createSocket() as SSLSocket
+            try {
+                return withContext(Dispatchers.IO) {
                     socket.connect(InetSocketAddress(host, port), timeoutMs)
                     socket.soTimeout = timeoutMs   // só para o handshake; depois a leitura espera à vontade
                     socket.startHandshake()
                     socket.soTimeout = 0
                     TlsChannel(socket)
-                } catch (e: Exception) {
-                    runCatching { socket.close() }
-                    throw describe(e)
                 }
+            } catch (e: CancellationException) {
+                // Cancelado durante o connect ou o handshake (que não param no meio): o canal pronto
+                // seria descartado com o socket aberto e a leitura parada nele.
+                runCatching { socket.close() }
+                throw e
+            } catch (e: Exception) {
+                runCatching { socket.close() }
+                throw describe(e)
             }
+        }
 
         /** Traduz as falhas de rede para os erros (e as mensagens) do app. */
         fun describe(error: Throwable): AndroidTvError = when (error) {

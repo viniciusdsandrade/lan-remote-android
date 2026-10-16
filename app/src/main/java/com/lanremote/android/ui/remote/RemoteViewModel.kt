@@ -47,7 +47,10 @@ class RemoteViewModel(
 
         /** Depois do POWER na TV Box: a imagem volta em segundos; a rede da TV, em ~40–55 s. */
         private const val TURN_ON_CHECK_MILLIS = 1_500L
-        private const val TURN_ON_CHECKS = 60   // 60 × 1,5 s = 90 s
+        private const val TURN_ON_TIMEOUT_MILLIS = 90_000L
+
+        /** Logo depois do POWER a TV ainda pode responder enquanto desliga: não volta a "Ligada". */
+        private const val POWER_OFF_GRACE_MILLIS = 8_000L
 
         /** Com a TV ligada a TV Box está acordada e aparece no NSD: renova o endereço dela. */
         private const val BOX_REFRESH_MILLIS = 5 * 60_000L
@@ -74,6 +77,10 @@ class RemoteViewModel(
     private var refreshing = false
     private var refreshAgain = false
     private var activePairing: BoxPairing? = null
+    private var pairingJob: Job? = null
+    /** Sobe a cada POWER aceito: respostas de consultas que começaram antes dele não valem mais. */
+    private var powerEpoch = 0
+    private var poweredOffAt: Long? = null
     private var pairingCandidate: AndroidTvBox? = null
     private var lastBoxRefresh: Long? = null
     private var hideExplanation: Job? = null
@@ -158,11 +165,11 @@ class RemoteViewModel(
     private suspend fun transmit(key: TVKey) {
         if (!_uiState.value.canSendKeys) return   // a TV caiu enquanto a tecla esperava na fila
 
-        val wait = MIN_GAP_MILLIS - (System.currentTimeMillis() - lastSendTime)
+        val wait = MIN_GAP_MILLIS - (clock() - lastSendTime)
         if (wait > 0) {
             delay(wait)
         }
-        lastSendTime = System.currentTimeMillis()
+        lastSendTime = clock()
 
         val result = tvClient.sendCommand(_uiState.value.config, key.code)
         keepSession(result.newSession)
@@ -170,6 +177,8 @@ class RemoteViewModel(
             is RoapResult.Ok -> {
                 if (key == TVKey.POWER) {
                     // POWER só desliga: a rede da TV cai logo em seguida.
+                    powerEpoch++
+                    poweredOffAt = clock()
                     _uiState.update { it.copy(powerState = TVPowerState.OFF) }
                 } else {
                     markAnswered()
@@ -230,6 +239,7 @@ class RemoteViewModel(
     }
 
     private suspend fun queryTv() {
+        val epoch = powerEpoch
         var volume = tvClient.getVolumeInfo(_uiState.value.config)
         val powerState = _uiState.value.powerState
         if (volume is RoapResult.Unreachable && (powerState == TVPowerState.ON || powerState == TVPowerState.UNKNOWN)) {
@@ -239,6 +249,8 @@ class RemoteViewModel(
             volume = tvClient.getVolumeInfo(_uiState.value.config)
         }
         keepSession(volume.newSession)
+        // A TV foi desligada enquanto a resposta vinha (as respostas levam 2 a 4 s): vale o POWER.
+        if (epoch != powerEpoch) return
         when (volume) {
             is RoapResult.Unreachable -> {
                 markUnreachable()
@@ -296,9 +308,15 @@ class RemoteViewModel(
         }
     }
 
-    /** Qualquer resposta HTTP (200 ou 401) prova que a rede da TV está de pé. */
+    /**
+     * Qualquer resposta HTTP (200 ou 401) prova que a rede da TV está de pé, menos nos primeiros
+     * segundos depois de um POWER aceito, quando ela ainda pode responder enquanto desliga.
+     */
     private fun markAnswered() {
-        _uiState.update { it.copy(powerState = TVPowerState.ON, powerOnError = null) }
+        val shuttingDown = poweredOffAt?.let { clock() - it < POWER_OFF_GRACE_MILLIS } == true
+        _uiState.update {
+            if (it.powerState == TVPowerState.OFF && shuttingDown) it else it.copy(powerState = TVPowerState.ON, powerOnError = null)
+        }
     }
 
     /** Sem resposta: nesta TV é standby, a não ser que ela esteja sendo ligada agora. */
@@ -481,13 +499,11 @@ class RemoteViewModel(
         haptic.performClick()
         try {
             val host = tvBoxLink.switchTvOn(box)
-            if (host != box.host) {
-                saveBox(box.copy(host = host))
-            }
+            updateBox(box.name) { it.copy(host = host) }
         } catch (e: CancellationException) {
             throw e
         } catch (e: AndroidTvError.NotPaired) {
-            saveBox(box.copy(paired = false))
+            updateBox(box.name) { it.copy(paired = false) }
             failTurnOn("A TV Box não reconhece mais este celular. Pareie de novo em Ajustes.")
             return
         } catch (e: AndroidTvError.Asleep) {
@@ -504,9 +520,11 @@ class RemoteViewModel(
             return
         }
 
-        // A imagem volta em segundos; a rede da NetCast, em quase um minuto.
+        // A imagem volta em segundos; a rede da NetCast, em quase um minuto. O prazo é de relógio:
+        // com a TV sem rede cada consulta ainda gasta o tempo de conexão.
         _uiState.update { it.copy(powerOnStep = "A TV está acendendo. O controle volta a responder em até 1 minuto…") }
-        repeat(TURN_ON_CHECKS) {
+        val deadline = clock() + TURN_ON_TIMEOUT_MILLIS
+        while (clock() < deadline) {
             delay(TURN_ON_CHECK_MILLIS)
             checkTv()
             if (_uiState.value.powerState == TVPowerState.ON) {
@@ -566,11 +584,12 @@ class RemoteViewModel(
 
     /** Faz a TV Box mostrar um código de 6 caracteres na tela da TV. */
     fun requestBoxCode(candidate: AndroidTvBox) {
+        pairingJob?.cancel()
         activePairing?.cancel()
         activePairing = null
         haptic.performClick()
         _uiState.update { it.copy(boxCodeError = null, boxPairingStage = BoxPairingStage.RequestingCode) }
-        viewModelScope.launch {
+        pairingJob = viewModelScope.launch {
             try {
                 activePairing = tvBoxLink.startPairing(candidate.host)
                 pairingCandidate = candidate
@@ -596,7 +615,7 @@ class RemoteViewModel(
         val pairing = activePairing ?: return
         val candidate = pairingCandidate ?: return
         _uiState.update { it.copy(boxCodeError = null, boxPairingStage = BoxPairingStage.Confirming) }
-        viewModelScope.launch {
+        pairingJob = viewModelScope.launch {
             try {
                 pairing.finish(code)
             } catch (e: CancellationException) {
@@ -634,13 +653,17 @@ class RemoteViewModel(
                 haptic.performError()
                 return@launch
             }
-            saveBox(candidate.copy(paired = true, mac = _uiState.value.box?.mac))   // guarda um MAC digitado antes
+            // Um MAC digitado antes só vale se for a mesma TV Box pareada de novo.
+            val typedMac = _uiState.value.box?.takeIf { it.name == candidate.name }?.mac
+            saveBox(candidate.copy(paired = true, mac = typedMac))
             _uiState.update { it.copy(powerOnError = null, boxPairingStage = BoxPairingStage.Idle) }
             haptic.performSuccess()
         }
     }
 
     fun cancelBoxPairing() {
+        pairingJob?.cancel()
+        pairingJob = null
         activePairing?.cancel()
         activePairing = null
         pairingCandidate = null
@@ -665,9 +688,23 @@ class RemoteViewModel(
         viewModelScope.launch { settingsRepo.forgetTvBox() }
     }
 
+    /** Muda a TV Box salva agora (não uma cópia antiga), se ainda for a mesma. */
+    private fun updateBox(name: String, change: (AndroidTvBox) -> AndroidTvBox) {
+        val current = _uiState.value.box ?: return
+        if (current.name != name) return
+        val updated = change(current)
+        if (updated != current) {
+            saveBox(updated)
+        }
+    }
+
     private fun saveBox(box: AndroidTvBox) {
         _uiState.update { it.copy(box = box) }
         viewModelScope.launch { settingsRepo.saveTvBox(box) }
+    }
+
+    override fun onCleared() {
+        activePairing?.cancel()   // fecha a conexão com a TV Box que esperava o código
     }
 
     private fun describe(error: Exception): String =

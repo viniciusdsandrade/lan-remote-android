@@ -415,6 +415,7 @@ private fun CodeEntry(confirming: Boolean, error: String?, actions: BoxSettingsA
             code = ""
             actions.onCancelPairing()
         },
+        enabled = !confirming,   // no meio da confirmação, cancelar só derrubaria a conexão
         modifier = Modifier.heightIn(min = 48.dp)
     ) { Text("Cancelar pareamento", color = TextSecondary) }
 }

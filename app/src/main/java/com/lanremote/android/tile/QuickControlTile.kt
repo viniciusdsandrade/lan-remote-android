@@ -52,7 +52,8 @@ class QuickControlTile : TileService() {
                 setSubtitle(tile, if (muted) "Sem som" else "Com som")
                 tile.updateTile()
             } else {
-                setSubtitle(tile, "TV desligada")
+                // Sem resposta é a TV em standby; recusa é a TV ligada sem aceitar o app (parear de novo).
+                setSubtitle(tile, if (result is RoapResult.Refused) "Pareie no app" else "TV desligada")
                 tile.updateTile()
                 openApp()
             }

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="black_oled">#121214</color>
+    <color name="surface_dark">#1E1E24</color>
+    <color name="surface_border">#2E2E36</color>
+    <color name="button_bg">#2A2A32</color>
+    <color name="text_primary">#F0F0F5</color>
+    <color name="power_red">#DC2626</color>
+    <color name="ok_blue">#1B4F8A</color>
+    <color name="online_green">#22C55E</color>
+</resources>

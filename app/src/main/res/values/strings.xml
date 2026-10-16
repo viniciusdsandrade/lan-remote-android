@@ -1,0 +1,15 @@
+<resources>
+    <string name="app_name">Controle LAN</string>
+    <string name="tile_name">TV Mudo</string>
+    <string name="settings">Configurações</string>
+    <string name="tv_ip">Endereço IP da TV</string>
+    <string name="tv_port">Porta ROAP</string>
+    <string name="pairing_key">Chave de Pareamento</string>
+    <string name="request_pairing_key">Exibir Código na TV</string>
+    <string name="pair_tv">Parear TV</string>
+    <string name="save">Salvar</string>
+    <string name="cancel">Cancelar</string>
+    <string name="connected">Conectado</string>
+    <string name="disconnected">Desconectado</string>
+    <string name="connecting">Conectando…</string>
+</resources>

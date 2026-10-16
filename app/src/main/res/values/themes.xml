@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.LanRemote" parent="android:Theme.Material.NoActionBar">
+        <item name="android:statusBarColor">@color/black_oled</item>
+        <item name="android:navigationBarColor">@color/black_oled</item>
+        <item name="android:windowBackground">@color/black_oled</item>
+    </style>
+</resources>

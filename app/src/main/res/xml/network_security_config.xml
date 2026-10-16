@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- Permite tráfego HTTP sem TLS na rede local privada (porta 8080 da TV LG NetCast) -->
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

@@ -2,6 +2,11 @@ package com.lanremote.android.ui.remote
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.lanremote.android.data.androidtv.AndroidTvError
+import com.lanremote.android.data.androidtv.BoxPairing
+import com.lanremote.android.data.androidtv.MacAddress
+import com.lanremote.android.data.androidtv.TvBoxLink
+import com.lanremote.android.data.model.AndroidTvBox
 import com.lanremote.android.data.model.TVKey
 import com.lanremote.android.data.model.TVPowerState
 import com.lanremote.android.data.network.DiscoveredTV
@@ -10,6 +15,7 @@ import com.lanremote.android.data.network.RoapResult
 import com.lanremote.android.data.network.SsdpScanner
 import com.lanremote.android.data.repository.SettingsRepository
 import com.lanremote.android.system.HapticFeedbackHelper
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -24,7 +30,10 @@ class RemoteViewModel(
     private val tvClient: KtorTVClient,
     private val haptic: HapticFeedbackHelper,
     private val settingsRepo: SettingsRepository,
-    private val ssdpScanner: SsdpScanner
+    private val ssdpScanner: SsdpScanner,
+    private val tvBoxLink: TvBoxLink,
+    /** Relógio monotônico em milissegundos (os testes passam o do agendador virtual). */
+    private val clock: () -> Long = { System.nanoTime() / 1_000_000 }
 ) : ViewModel() {
 
     companion object {
@@ -34,6 +43,14 @@ class RemoteViewModel(
         /** Espera antes da segunda tentativa quando uma consulta fica sem resposta. */
         private const val RETRY_DELAY_MILLIS = 1_500L
         private const val VOLUME_REFRESH_DELAY_MILLIS = 350L
+
+        /** Depois do POWER na TV Box: a imagem volta em segundos; a rede da TV, em ~40–55 s. */
+        private const val TURN_ON_CHECK_MILLIS = 1_500L
+        private const val TURN_ON_CHECKS = 60   // 60 × 1,5 s = 90 s
+
+        /** Com a TV ligada a TV Box está acordada e aparece no NSD: renova o endereço dela. */
+        private const val BOX_REFRESH_MILLIS = 5 * 60_000L
+        private const val BOX_REFRESH_DISCOVERY_MILLIS = 2_000L
 
         private val VOLUME_KEYS = setOf(TVKey.VOLUME_UP, TVKey.VOLUME_DOWN, TVKey.MUTE)
         private val STEP_KEYS = setOf(
@@ -52,8 +69,15 @@ class RemoteViewModel(
     private var configLoaded = false
     private var refreshing = false
     private var refreshAgain = false
+    private var activePairing: BoxPairing? = null
+    private var pairingCandidate: AndroidTvBox? = null
+    private var lastBoxRefresh: Long? = null
 
     init {
+        // A TV Box primeiro: a primeira consulta à TV já sabe se dá para ligá-la.
+        viewModelScope.launch {
+            settingsRepo.tvBoxFlow.collect { box -> _uiState.update { it.copy(box = box) } }
+        }
         // Observa as configurações salvas (DataStore). Só a troca de endereço pede uma consulta
         // nova: uma sessão renovada também chega por aqui.
         viewModelScope.launch {
@@ -242,11 +266,12 @@ class RemoteViewModel(
                 )
             }
         }
+        refreshBoxAddressIfNeeded()
     }
 
     /** Qualquer resposta HTTP (200 ou 401) prova que a rede da TV está de pé. */
     private fun markAnswered() {
-        _uiState.update { it.copy(powerState = TVPowerState.ON) }
+        _uiState.update { it.copy(powerState = TVPowerState.ON, powerOnError = null) }
     }
 
     /** Sem resposta: nesta TV é standby, a não ser que ela esteja sendo ligada agora. */
@@ -327,7 +352,7 @@ class RemoteViewModel(
                 pairingKey = pairingKey.trim()
             )
             settingsRepo.saveConfig(updated)
-            _uiState.update { it.copy(config = updated, isSettingsOpen = false) }
+            _uiState.update { it.copy(config = updated) }
             checkTv()
         }
     }
@@ -372,9 +397,231 @@ class RemoteViewModel(
     fun openSettings() {
         haptic.performClick()
         _uiState.update { it.copy(isSettingsOpen = true, pairingMessage = null) }
+        val state = _uiState.value
+        if (state.box?.paired != true && state.discoveredBoxes.isEmpty()) {
+            searchBoxes()
+        }
     }
 
     fun closeSettings() {
+        cancelBoxPairing()
         _uiState.update { it.copy(isSettingsOpen = false, pairingMessage = null) }
     }
+
+    // Ligar a TV pela TV Box (HDMI-CEC)
+
+    /**
+     * Acorda a TV Box pelo Wi-Fi e aperta POWER nela: ao acordar, ela liga a TV pelo HDMI-CEC
+     * (SIMPLINK). Depois espera a rede da TV voltar, consultando a cada 1,5 s por até 90 s.
+     */
+    fun turnOn() {
+        val state = _uiState.value
+        val box = state.box
+        if (box == null || !box.paired || state.powerState == TVPowerState.TURNING_ON) return
+        if (!tvBoxLink.isOnWifi()) {
+            _uiState.update { it.copy(powerOnError = "Conecte o celular ao Wi-Fi de casa para ligar a TV.") }
+            haptic.performError()
+            return
+        }
+        viewModelScope.launch { performTurnOn(box) }
+    }
+
+    private suspend fun performTurnOn(box: AndroidTvBox) {
+        _uiState.update {
+            it.copy(powerState = TVPowerState.TURNING_ON, powerOnError = null, powerOnStep = "Acordando a ${box.name} pelo Wi-Fi…")
+        }
+        haptic.performClick()
+        try {
+            val host = tvBoxLink.switchTvOn(box)
+            if (host != box.host) {
+                saveBox(box.copy(host = host))
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: AndroidTvError.NotPaired) {
+            saveBox(box.copy(paired = false))
+            failTurnOn("A TV Box não reconhece mais este celular. Pareie de novo em Ajustes.")
+            return
+        } catch (e: AndroidTvError.Asleep) {
+            failTurnOn(
+                if (box.wakeMacs.isEmpty()) {
+                    "A TV Box está em repouso e o app não sabe o MAC do Wi-Fi dela para acordá-la. Informe em Ajustes."
+                } else {
+                    "A TV Box não acordou pelo Wi-Fi. Se o IP dela mudou, ligue a TV uma vez pelo controle e o app atualiza o endereço."
+                }
+            )
+            return
+        } catch (e: Exception) {
+            failTurnOn("${describe(e)} Ela está ligada na tomada e no Wi-Fi?")
+            return
+        }
+
+        // A imagem volta em segundos; a rede da NetCast, em quase um minuto.
+        _uiState.update { it.copy(powerOnStep = "A TV está acendendo. O controle volta a responder em até 1 minuto…") }
+        repeat(TURN_ON_CHECKS) {
+            delay(TURN_ON_CHECK_MILLIS)
+            checkTv()
+            if (_uiState.value.powerState == TVPowerState.ON) {
+                _uiState.update { it.copy(powerOnStep = "") }
+                haptic.performSuccess()
+                return
+            }
+        }
+        failTurnOn(
+            "A TV Box recebeu o pedido, mas a TV não respondeu. Confira se o SIMPLINK está ligado na TV " +
+                "e o controle HDMI (CEC) na TV Box."
+        )
+    }
+
+    private fun failTurnOn(message: String) {
+        _uiState.update { it.copy(powerState = TVPowerState.OFF, powerOnStep = "", powerOnError = message) }
+        haptic.performError()
+    }
+
+    /**
+     * Com a TV ligada a TV Box está acordada e aparece no NSD: a cada 5 min o app confere o IP e o
+     * MAC Bluetooth dela, para uma troca de DHCP não deixá-lo acordando o endereço errado depois.
+     */
+    private fun refreshBoxAddressIfNeeded() {
+        val box = _uiState.value.box ?: return
+        val now = clock()
+        val last = lastBoxRefresh
+        if (!box.paired || _uiState.value.powerState != TVPowerState.ON) return
+        if (last != null && now - last < BOX_REFRESH_MILLIS) return
+        if (!tvBoxLink.isOnWifi()) return
+        lastBoxRefresh = now
+        viewModelScope.launch {
+            val fresh = tvBoxLink.discover(BOX_REFRESH_DISCOVERY_MILLIS).firstOrNull { it.name == box.name } ?: return@launch
+            val current = _uiState.value.box ?: return@launch
+            if (current.name != fresh.name) return@launch
+            val updated = current.copy(host = fresh.host, bluetoothMac = fresh.bluetoothMac ?: current.bluetoothMac)
+            if (updated != current) {
+                saveBox(updated)
+            }
+        }
+    }
+
+    // Pareamento com a TV Box (uma vez)
+
+    fun searchBoxes() {
+        _uiState.update { it.copy(boxPairingStage = BoxPairingStage.Searching) }
+        viewModelScope.launch {
+            val boxes = tvBoxLink.discover()
+            _uiState.update {
+                it.copy(
+                    discoveredBoxes = boxes,
+                    boxPairingStage = if (it.boxPairingStage == BoxPairingStage.Searching) BoxPairingStage.Idle else it.boxPairingStage
+                )
+            }
+        }
+    }
+
+    /** Faz a TV Box mostrar um código de 6 caracteres na tela da TV. */
+    fun requestBoxCode(candidate: AndroidTvBox) {
+        activePairing?.cancel()
+        activePairing = null
+        haptic.performClick()
+        _uiState.update { it.copy(boxCodeError = null, boxPairingStage = BoxPairingStage.RequestingCode) }
+        viewModelScope.launch {
+            try {
+                activePairing = tvBoxLink.startPairing(candidate.host)
+                pairingCandidate = candidate
+                _uiState.update { it.copy(boxPairingStage = BoxPairingStage.WaitingForCode) }
+                haptic.performSuccess()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                _uiState.update { it.copy(boxPairingStage = BoxPairingStage.Failed(describe(e))) }
+                haptic.performError()
+            }
+        }
+    }
+
+    /** Pareamento pelo IP digitado (no emulador o NSD não atravessa o NAT). */
+    fun requestBoxCode(host: String) {
+        val clean = host.trim()
+        if (clean.isEmpty()) return
+        requestBoxCode(_uiState.value.discoveredBoxes.firstOrNull { it.host == clean } ?: AndroidTvBox(name = "TV Box", host = clean, paired = false))
+    }
+
+    fun confirmBoxCode(code: String) {
+        val pairing = activePairing ?: return
+        val candidate = pairingCandidate ?: return
+        _uiState.update { it.copy(boxCodeError = null, boxPairingStage = BoxPairingStage.Confirming) }
+        viewModelScope.launch {
+            try {
+                pairing.finish(code)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: AndroidTvError.WrongCode) {
+                // O checksum do código pega o erro antes de enviar: a TV Box continua esperando.
+                _uiState.update { it.copy(boxCodeError = e.message, boxPairingStage = BoxPairingStage.WaitingForCode) }
+                haptic.performWarning()
+                return@launch
+            } catch (e: Exception) {
+                pairing.cancel()
+                activePairing = null
+                _uiState.update { it.copy(boxPairingStage = BoxPairingStage.Failed(describe(e))) }
+                haptic.performError()
+                return@launch
+            }
+            activePairing = null
+            pairingCandidate = null
+
+            // Confere na porta do controle, sem apertar nada, que a TV Box aceita o app.
+            val accepted = try {
+                tvBoxLink.checkConnection(candidate.host)
+                true
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: AndroidTvError.NotPaired) {
+                false
+            } catch (e: Exception) {
+                true   // a TV Box aceitou o código; uma falha passageira aqui não desfaz o pareamento
+            }
+            if (!accepted) {
+                _uiState.update {
+                    it.copy(boxPairingStage = BoxPairingStage.Failed("A TV Box não aceitou o certificado do app. Tente parear de novo."))
+                }
+                haptic.performError()
+                return@launch
+            }
+            saveBox(candidate.copy(paired = true, mac = _uiState.value.box?.mac))   // guarda um MAC digitado antes
+            _uiState.update { it.copy(powerOnError = null, boxPairingStage = BoxPairingStage.Idle) }
+            haptic.performSuccess()
+        }
+    }
+
+    fun cancelBoxPairing() {
+        activePairing?.cancel()
+        activePairing = null
+        pairingCandidate = null
+        _uiState.update { it.copy(boxPairingStage = BoxPairingStage.Idle, boxCodeError = null) }
+    }
+
+    /**
+     * Grava o MAC do Wi-Fi digitado (vazio apaga). Devolve false se o texto não for um MAC.
+     */
+    fun setBoxMac(text: String): Boolean {
+        val box = _uiState.value.box ?: return false
+        val trimmed = text.trim()
+        val mac = if (trimmed.isEmpty()) null else MacAddress.normalize(trimmed) ?: return false
+        saveBox(box.copy(mac = mac))
+        return true
+    }
+
+    fun forgetBox() {
+        cancelBoxPairing()
+        tvBoxLink.forget()
+        _uiState.update { it.copy(box = null) }
+        viewModelScope.launch { settingsRepo.forgetTvBox() }
+    }
+
+    private fun saveBox(box: AndroidTvBox) {
+        _uiState.update { it.copy(box = box) }
+        viewModelScope.launch { settingsRepo.saveTvBox(box) }
+    }
+
+    private fun describe(error: Exception): String =
+        (error as? AndroidTvError)?.message ?: "Não consegui falar com a TV Box."
 }

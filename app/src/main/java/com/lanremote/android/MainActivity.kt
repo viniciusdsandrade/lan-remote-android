@@ -25,7 +25,8 @@ class MainActivity : ComponentActivity() {
                     tvClient = app.ktorTvClient,
                     haptic = app.hapticHelper,
                     settingsRepo = app.settingsRepository,
-                    ssdpScanner = app.ssdpScanner
+                    ssdpScanner = app.ssdpScanner,
+                    tvBoxLink = app.tvBoxLink
                 ) as T
             }
         }

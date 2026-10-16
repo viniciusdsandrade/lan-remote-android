@@ -61,6 +61,8 @@ fun StatusHeader(
     volumeLevel: Int,
     isMuted: Boolean,
     inputSource: String?,
+    powerTurnsOn: Boolean,
+    powerEnabled: Boolean,
     onPowerClick: () -> Unit,
     onSettingsClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -150,10 +152,10 @@ fun StatusHeader(
             }
 
             RemoteButton(
-                onClick = onPowerClick,
+                onClick = { if (powerEnabled) onPowerClick() },
                 icon = Icons.Default.PowerSettingsNew,
-                text = "Desligar",
-                backgroundColor = PowerRed,
+                text = if (powerTurnsOn) "Ligar" else "Desligar",
+                backgroundColor = if (powerTurnsOn) TurnOnGreen else PowerRed,
                 contentColor = Color.White,
                 shapeRadius = 24.dp,
                 modifier = Modifier.size(48.dp)

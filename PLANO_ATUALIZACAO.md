@@ -242,6 +242,12 @@ KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_RSA, "AndroidKeyStore")
 - **PSS é obrigatório:** no TLS 1.3 a assinatura do cliente (CertificateVerify) é RSA-PSS; sem
   `SIGNATURE_PADDING_RSA_PSS` o handshake falha dentro do Keystore. PKCS#1 com SHA-256 é o que faz o certificado sair
   assinado de verdade.
+- **Correção feita na implementação (Fase 3):** o Conscrypt aplica o enchimento PSS no BoringSSL e pede ao Keystore só
+  a operação RSA crua (`Cipher "RSA/ECB/NoPadding"` com a chave privada = assinar com `KM_PAD_NONE` e `DIGEST_NONE`;
+  ver `CryptoUpcalls.rsaOpWithPrivateKey` e `AndroidKeyStoreRSACipherSpi.NoPadding`). Por isso a chave precisa também
+  de `setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)`. Conferido no emulador (Android 17) contra um
+  servidor TLS 1.3 que exige certificado de cliente: com a especificação acima e sem esse enchimento, o keystore2
+  recusa com `INCOMPATIBLE_PADDING_MODE`; com ele, o handshake fecha (TLS 1.3 e 1.2).
 - Sem `setUserAuthenticationRequired` e sem StrongBox (RSA no StrongBox é lento ou inexistente em muitos aparelhos).
 - **KeyManager:** um `X509ExtendedKeyManager` próprio que **sempre** devolve o alias (`chooseClientAlias` e
   `chooseEngineClientAlias`), a cadeia `[certificado]` e a chave privada do Keystore. Não use `KeyManagerFactory`:
@@ -548,7 +554,9 @@ Se alguma parte não puder ser feita (TV ou aparelho indisponível), diga isso n
 - [x] Fase 0: preparar
 - [x] Fase 1: ROAP certo e estado da TV
 - [x] Fase 2: protocolo do Android TV (parte pura)
-- [ ] Fase 3: rede de verdade
+- [x] Fase 3: rede de verdade (conferida no emulador contra uma TV Box falsa com TLS 1.3 e 1.2: pareamento,
+  handshake da 6466, WoL e as duas sequências de ligar; a conferência na TV Box real ficou para a Fase 8, porque a TV
+  estava em standby)
 - [ ] Fase 4: ligar pela interface e Ajustes
 - [ ] Fase 5: controle didático
 - [ ] Fase 6: ícone e bloco rápido

@@ -557,7 +557,8 @@ Se alguma parte não puder ser feita (TV ou aparelho indisponível), diga isso n
 - [x] Fase 3: rede de verdade (conferida no emulador contra uma TV Box falsa com TLS 1.3 e 1.2: pareamento,
   handshake da 6466, WoL e as duas sequências de ligar; a conferência na TV Box real ficou para a Fase 8, porque a TV
   estava em standby)
-- [ ] Fase 4: ligar pela interface e Ajustes
+- [x] Fase 4: ligar pela interface e Ajustes (Ajustes em tela cheia no lugar do controle, não num `Dialog`: a janela
+  do diálogo pedia a altura da tela inteira e o sistema a encaixava entre as barras, cortando o fim da rolagem)
 - [ ] Fase 5: controle didático
 - [ ] Fase 6: ícone e bloco rápido
 - [ ] Fase 7: CI, README e versão

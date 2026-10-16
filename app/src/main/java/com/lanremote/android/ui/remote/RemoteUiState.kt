@@ -1,9 +1,20 @@
 package com.lanremote.android.ui.remote
 
+import com.lanremote.android.data.model.AndroidTvBox
 import com.lanremote.android.data.model.TVConfig
 import com.lanremote.android.data.model.TVPowerState
 import com.lanremote.android.data.model.TVStatus
 import com.lanremote.android.data.network.DiscoveredTV
+
+/** Onde está o pareamento com a TV Box (uma vez só, em Ajustes). */
+sealed interface BoxPairingStage {
+    data object Idle : BoxPairingStage
+    data object Searching : BoxPairingStage
+    data object RequestingCode : BoxPairingStage
+    data object WaitingForCode : BoxPairingStage
+    data object Confirming : BoxPairingStage
+    data class Failed(val message: String) : BoxPairingStage
+}
 
 data class RemoteUiState(
     val config: TVConfig = TVConfig(),
@@ -16,9 +27,26 @@ data class RemoteUiState(
     val isKeypadVisible: Boolean = false,
     val isSettingsOpen: Boolean = false,
     val isPowerOffDialogOpen: Boolean = false,
-    val pairingMessage: String? = null
+    val pairingMessage: String? = null,
+
+    // Ligar a TV pela TV Box
+    val box: AndroidTvBox? = null,
+    /** O que está acontecendo enquanto a TV liga ("Acordando a TV Box…"). */
+    val powerOnStep: String = "",
+    val powerOnError: String? = null,
+    val boxPairingStage: BoxPairingStage = BoxPairingStage.Idle,
+    val discoveredBoxes: List<AndroidTvBox> = emptyList(),
+    val boxCodeError: String? = null
 ) {
     /** Teclas só vão para a TV ligada (ou enquanto a primeira consulta não terminou). */
     val canSendKeys: Boolean
         get() = powerState == TVPowerState.ON || powerState == TVPowerState.UNKNOWN
+
+    /** Com a TV Box pareada o app consegue ligar a TV. */
+    val canTurnOnTv: Boolean
+        get() = box?.paired == true
+
+    /** A TV não recebe teclas agora: o controle fica esmaecido e o cartão mostra como ligá-la. */
+    val isTvAsleep: Boolean
+        get() = powerState == TVPowerState.OFF || powerState == TVPowerState.TURNING_ON
 }

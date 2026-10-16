@@ -70,8 +70,10 @@ fun PowerBanner(
     modifier: Modifier = Modifier
 ) {
     var nudge by remember { mutableStateOf(false) }
+    // Só pulsa para teclas apertadas com o cartão na tela: ao reaparecer, o contador antigo não conta.
+    val pulseWhenShown = remember { attentionPulse }
     LaunchedEffect(attentionPulse) {
-        if (attentionPulse > 0) {
+        if (attentionPulse != pulseWhenShown) {
             nudge = true
             delay(400)
             nudge = false

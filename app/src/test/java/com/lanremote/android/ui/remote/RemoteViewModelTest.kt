@@ -595,4 +595,112 @@ class RemoteViewModelTest {
         coVerify(exactly = 1) { tvClient.fetchModelName("192.168.1.100", 8080) }
         coVerify(exactly = 1) { settingsRepo.updateModelName("47LN5700-SA_11") }
     }
+
+    // Correções da revisão
+
+    @Test
+    fun turnOn_slowChecksStillGiveUpAfter90SecondsOfClock() = runTest(testDispatcher) {
+        val viewModel = tvOffWithPairedBox()
+        coEvery { tvBoxLink.switchTvOn(any()) } returns pairedBox.host
+        // TV sem rede: cada consulta gasta o tempo de conexão antes de falhar.
+        coEvery { tvClient.getVolumeInfo(any()) } coAnswers {
+            delay(2_000)
+            noAnswer
+        }
+        val start = currentTime
+
+        viewModel.turnOn()
+        advanceUntilIdle()
+
+        val elapsed = currentTime - start
+        assertTrue("desistiu em $elapsed ms", elapsed in 90_000..94_000)
+        assertEquals(TVPowerState.OFF, viewModel.uiState.value.powerState)
+    }
+
+    @Test
+    fun aReplyAlreadyOnTheWay_doesNotUndoPowerOff() = runTest(testDispatcher) {
+        val viewModel = newViewModel()
+        coEvery { tvClient.getVolumeInfo(any()) } coAnswers {
+            delay(3_000)   // a TV leva 2 a 4 s para responder
+            RoapResult.Ok(volume)
+        }
+
+        viewModel.refreshStatus()
+        advanceTimeBy(1_000)
+        viewModel.confirmPowerOff()
+        advanceTimeBy(500)
+        assertEquals(TVPowerState.OFF, viewModel.uiState.value.powerState)
+
+        advanceTimeBy(3_000)   // a resposta que já vinha chega agora
+        assertEquals(TVPowerState.OFF, viewModel.uiState.value.powerState)
+    }
+
+    @Test
+    fun aTvStillAnsweringRightAfterPowerOff_staysOffUntilTheGraceEnds() = runTest(testDispatcher) {
+        val viewModel = newViewModel()
+        viewModel.confirmPowerOff()
+        advanceUntilIdle()
+        assertEquals(TVPowerState.OFF, viewModel.uiState.value.powerState)
+
+        advanceTimeBy(2_000)
+        viewModel.refreshStatus()   // a TV ainda responde enquanto desliga
+        advanceUntilIdle()
+        assertEquals(TVPowerState.OFF, viewModel.uiState.value.powerState)
+
+        advanceTimeBy(10_000)
+        viewModel.refreshStatus()   // continua respondendo: o POWER não chegou a desligá-la
+        advanceUntilIdle()
+        assertEquals(TVPowerState.ON, viewModel.uiState.value.powerState)
+    }
+
+    @Test
+    fun cancellingWhileTheCodeIsRequested_dropsTheRequest() = runTest(testDispatcher) {
+        coEvery { tvBoxLink.startPairing(any()) } coAnswers {
+            delay(5_000)
+            mockk(relaxed = true)
+        }
+        val viewModel = newViewModel()
+
+        viewModel.requestBoxCode(pairedBox.copy(paired = false))
+        advanceTimeBy(1_000)
+        viewModel.cancelBoxPairing()
+        advanceUntilIdle()
+
+        assertEquals(BoxPairingStage.Idle, viewModel.uiState.value.boxPairingStage)
+        viewModel.confirmBoxCode("4D1B09")   // não há pareamento aberto
+        advanceUntilIdle()
+        coVerify(exactly = 0) { tvBoxLink.checkConnection(any()) }
+    }
+
+    @Test
+    fun pairingAnotherBox_doesNotCarryTheOldTypedMac() = runTest(testDispatcher) {
+        boxFlow.value = pairedBox.copy(mac = "02:00:00:00:00:01")
+        val other = AndroidTvBox(name = "Outra TV Box", host = "192.168.1.30", paired = false, bluetoothMac = "02:00:00:00:00:31")
+        coEvery { tvBoxLink.startPairing(any()) } returns mockk(relaxed = true)
+        val viewModel = newViewModel()
+
+        viewModel.requestBoxCode(other)
+        advanceUntilIdle()
+        viewModel.confirmBoxCode("4D1B09")
+        advanceUntilIdle()
+
+        coVerify { settingsRepo.saveTvBox(other.copy(paired = true, mac = null)) }
+    }
+
+    @Test
+    fun forgettingTheBoxDuringTurnOn_isNotUndone() = runTest(testDispatcher) {
+        val viewModel = tvOffWithPairedBox()
+        coEvery { tvBoxLink.switchTvOn(any()) } coAnswers {
+            delay(2_000)
+            throw AndroidTvError.NotPaired()
+        }
+
+        viewModel.turnOn()
+        advanceTimeBy(1_000)
+        viewModel.forgetBox()
+        advanceUntilIdle()
+
+        assertNull(viewModel.uiState.value.box)
+        coVerify(exactly = 0) { settingsRepo.saveTvBox(any()) }
+    }
 }

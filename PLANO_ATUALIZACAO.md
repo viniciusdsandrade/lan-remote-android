@@ -547,7 +547,7 @@ Se alguma parte não puder ser feita (TV ou aparelho indisponível), diga isso n
 
 - [x] Fase 0: preparar
 - [x] Fase 1: ROAP certo e estado da TV
-- [ ] Fase 2: protocolo do Android TV (parte pura)
+- [x] Fase 2: protocolo do Android TV (parte pura)
 - [ ] Fase 3: rede de verdade
 - [ ] Fase 4: ligar pela interface e Ajustes
 - [ ] Fase 5: controle didático

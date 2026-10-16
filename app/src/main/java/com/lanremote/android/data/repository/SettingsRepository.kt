@@ -61,6 +61,13 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
+    /** Sessão nova que a TV deu ao refazer o pareamento com a chave salva (depois de um 401). */
+    suspend fun updateSession(sessionId: String) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_SESSION_ID] = sessionId
+        }
+    }
+
     suspend fun updateHostAndPort(host: String, port: Int) {
         context.dataStore.edit { prefs ->
             prefs[KEY_HOST] = host

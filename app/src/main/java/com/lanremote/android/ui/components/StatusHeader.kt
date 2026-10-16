@@ -12,8 +12,6 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.VolumeMute
-import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material.icons.filled.PowerSettingsNew
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Icon
@@ -27,7 +25,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.lanremote.android.data.model.TVPowerState
 import com.lanremote.android.ui.theme.ButtonBackground
+import com.lanremote.android.ui.theme.MutedOrange
 import com.lanremote.android.ui.theme.OfflineRed
 import com.lanremote.android.ui.theme.OnlineGreen
 import com.lanremote.android.ui.theme.PowerRed
@@ -35,14 +35,32 @@ import com.lanremote.android.ui.theme.SurfaceBorder
 import com.lanremote.android.ui.theme.SurfaceDark
 import com.lanremote.android.ui.theme.TextPrimary
 import com.lanremote.android.ui.theme.TextSecondary
+import com.lanremote.android.ui.theme.TurningOnBlue
+import com.lanremote.android.ui.theme.UnknownGray
+import com.lanremote.android.ui.theme.VolumeCyan
+
+/** Como a tela chama cada estado da TV. */
+fun TVPowerState.label(): String = when (this) {
+    TVPowerState.ON -> "Ligada"
+    TVPowerState.OFF -> "Desligada"
+    TVPowerState.TURNING_ON -> "Ligando…"
+    TVPowerState.UNKNOWN -> "Verificando…"
+}
+
+fun TVPowerState.color(): Color = when (this) {
+    TVPowerState.ON -> OnlineGreen
+    TVPowerState.OFF -> OfflineRed
+    TVPowerState.TURNING_ON -> TurningOnBlue
+    TVPowerState.UNKNOWN -> UnknownGray
+}
 
 @Composable
 fun StatusHeader(
-    isOnline: Boolean,
+    powerState: TVPowerState,
     deviceTitle: String,
-    deviceSubTitle: String,
     volumeLevel: Int,
     isMuted: Boolean,
+    inputSource: String?,
     onPowerClick: () -> Unit,
     onSettingsClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -59,17 +77,16 @@ fun StatusHeader(
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        // Status Info & Settings Button
         Row(
+            modifier = Modifier.weight(1f),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // Online LED with glow
             Box(
                 modifier = Modifier
-                    .size(14.dp)
+                    .size(12.dp)
                     .clip(CircleShape)
-                    .background(if (isOnline) OnlineGreen else OfflineRed)
+                    .background(powerState.color())
             )
 
             Column {
@@ -77,39 +94,41 @@ fun StatusHeader(
                     text = deviceTitle,
                     fontSize = 15.sp,
                     fontWeight = FontWeight.Bold,
-                    color = TextPrimary
+                    color = TextPrimary,
+                    maxLines = 1
                 )
 
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     Text(
-                        text = deviceSubTitle,
+                        text = powerState.label(),
                         fontSize = 12.sp,
-                        color = TextSecondary
+                        fontWeight = FontWeight.SemiBold,
+                        color = powerState.color()
                     )
 
-                    if (isOnline) {
+                    if (powerState == TVPowerState.ON) {
                         Text(text = "•", fontSize = 10.sp, color = TextSecondary)
-                        Icon(
-                            imageVector = if (isMuted) Icons.AutoMirrored.Filled.VolumeMute else Icons.AutoMirrored.Filled.VolumeUp,
-                            contentDescription = null,
-                            tint = if (isMuted) PowerRed else TextSecondary,
-                            modifier = Modifier.size(14.dp)
-                        )
                         Text(
                             text = if (isMuted) "Mudo" else "Vol $volumeLevel",
                             fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium,
-                            color = if (isMuted) PowerRed else TextSecondary
+                            fontWeight = FontWeight.SemiBold,
+                            color = if (isMuted) MutedOrange else VolumeCyan
+                        )
+                        Text(text = "•", fontSize = 10.sp, color = TextSecondary)
+                        Text(
+                            text = inputSource ?: "TV",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.SemiBold,
+                            color = TextPrimary
                         )
                     }
                 }
             }
         }
 
-        // Actions: Settings + Power Button
         Row(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -117,14 +136,14 @@ fun StatusHeader(
             IconButton(
                 onClick = onSettingsClick,
                 modifier = Modifier
-                    .size(42.dp)
+                    .size(48.dp)
                     .clip(CircleShape)
                     .background(ButtonBackground)
                     .border(1.dp, SurfaceBorder, CircleShape)
             ) {
                 Icon(
                     imageVector = Icons.Default.Settings,
-                    contentDescription = "Configurações",
+                    contentDescription = "Ajustes",
                     tint = TextPrimary,
                     modifier = Modifier.size(20.dp)
                 )
@@ -133,11 +152,11 @@ fun StatusHeader(
             RemoteButton(
                 onClick = onPowerClick,
                 icon = Icons.Default.PowerSettingsNew,
-                text = "Power",
+                text = "Desligar",
                 backgroundColor = PowerRed,
                 contentColor = Color.White,
-                shapeRadius = 21.dp,
-                modifier = Modifier.size(42.dp)
+                shapeRadius = 24.dp,
+                modifier = Modifier.size(48.dp)
             )
         }
     }

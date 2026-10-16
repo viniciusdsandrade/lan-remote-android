@@ -33,6 +33,20 @@ class TVKeyTest {
     }
 
     @Test
+    fun verifyTvFeatureKeyCodes() {
+        // Tabela do Anexo A da LG UDAP 2.0, a mesma do ROAP (PROTOCOLO.md).
+        assertEquals(411, TVKey.SIMPLINK.code)
+        assertEquals(417, TVKey.APPS.code)
+        assertEquals(46, TVKey.ASPECT_RATIO.code)
+        assertEquals(400, TVKey.KEY_3D.code)
+        assertEquals(403, TVKey.PREVIOUS_CHANNEL.code)
+        assertEquals(405, TVKey.QUICK_MENU.code)
+        assertEquals(43, TVKey.LIVE_TV.code)
+        assertEquals(44, TVKey.EPG.code)
+        assertEquals(45, TVKey.INFO.code)
+    }
+
+    @Test
     fun verifyConfigBaseUrl() {
         val config = TVConfig(host = "192.0.2.100", port = 8080)
         assertEquals("http://192.0.2.100:8080", config.baseUrl)

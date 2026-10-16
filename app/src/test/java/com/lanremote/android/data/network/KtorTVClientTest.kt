@@ -233,6 +233,24 @@ class KtorTVClientTest {
     }
 
     @Test
+    fun fetchModelName_readsTheUdapDescription() = runBlocking {
+        var userAgent: String? = null
+        var target: String? = null
+        val client = KtorTVClient(HttpClient(MockEngine { request ->
+            userAgent = request.headers[HttpHeaders.UserAgent]
+            target = request.url.parameters["target"]
+            reply(
+                "<envelope><device><deviceType>TV</deviceType><modelName>42LN5700-SA_11</modelName>" +
+                    "<friendlyName>[TV][LG]42LN5700-SA</friendlyName></device></envelope>"
+            )
+        }))
+
+        assertEquals("42LN5700-SA_11", client.fetchModelName("192.0.2.100"))
+        assertEquals("rootservice.xml", target)
+        assertTrue("a descrição UDAP pede UDAP/2.0 no User-Agent", userAgent!!.contains("UDAP/2.0"))
+    }
+
+    @Test
     fun noAnswer_isUnreachable() = runBlocking {
         val client = KtorTVClient(HttpClient(MockEngine { throw ConnectException("Connection refused") }))
 

@@ -1,8 +1,5 @@
 package com.lanremote.android.ui.remote
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -16,7 +13,6 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -26,15 +22,16 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Dialpad
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Menu
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
 import com.lanremote.android.data.model.TVKey
 import com.lanremote.android.ui.components.CircularDPad
 import com.lanremote.android.ui.components.ColorButtonsRow
@@ -47,6 +44,7 @@ import com.lanremote.android.ui.settings.SettingsDialog
 import com.lanremote.android.ui.theme.BlackOled
 import com.lanremote.android.ui.theme.ButtonBackground
 import com.lanremote.android.ui.theme.OkBlue
+import com.lanremote.android.ui.theme.PowerRedLight
 import com.lanremote.android.ui.theme.SurfaceDark
 import com.lanremote.android.ui.theme.TextPrimary
 import com.lanremote.android.ui.theme.TextSecondary
@@ -76,12 +74,15 @@ fun RemoteScreen(
         ) {
             // 1. Status Header (LED, Device Info, Settings & Power)
             StatusHeader(
-                isOnline = uiState.status.isOnline,
+                powerState = uiState.powerState,
                 deviceTitle = uiState.config.modelName,
-                deviceSubTitle = "${uiState.config.host}:${uiState.config.port}",
                 volumeLevel = uiState.status.volumeLevel,
                 isMuted = uiState.status.isMuted,
-                onPowerClick = { viewModel.sendKey(TVKey.POWER) },
+                inputSource = uiState.status.inputSource,
+                onPowerClick = {
+                    // Desligar pede confirmação; com a TV desligada a tecla só aponta o caminho.
+                    if (uiState.canSendKeys) viewModel.askToPowerOff() else viewModel.sendKey(TVKey.POWER)
+                },
                 onSettingsClick = { viewModel.openSettings() }
             )
 
@@ -217,27 +218,14 @@ fun RemoteScreen(
                 onKeyClick = { key -> viewModel.sendKey(key) }
             )
 
-            // 9. Feedback Toast bar
-            AnimatedVisibility(
-                visible = !uiState.lastMessage.isNullOrBlank(),
-                enter = fadeIn(),
-                exit = fadeOut()
-            ) {
-                Box(
-                    modifier = Modifier
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(SurfaceDark)
-                        .padding(horizontal = 12.dp, vertical = 6.dp)
-                ) {
-                    Text(
-                        text = uiState.lastMessage ?: "",
-                        fontSize = 11.sp,
-                        color = TextSecondary
-                    )
-                }
-            }
-
             Spacer(modifier = Modifier.height(16.dp))
+        }
+
+        if (uiState.isPowerOffDialogOpen) {
+            PowerOffDialog(
+                onConfirm = { viewModel.confirmPowerOff() },
+                onDismiss = { viewModel.dismissPowerOff() }
+            )
         }
 
         // Settings Dialog Modal
@@ -256,4 +244,31 @@ fun RemoteScreen(
             )
         }
     }
+}
+
+/**
+ * Prevenção de erro: desligar é fácil, mas esta TV não liga pela rede sozinha.
+ */
+@Composable
+private fun PowerOffDialog(onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Desligar a TV?") },
+        text = {
+            Text("Esta TV não liga pela rede sozinha. Para ligar pelo app depois, configure a TV Box em Ajustes.")
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) {
+                Text("Desligar", color = PowerRedLight, fontWeight = FontWeight.SemiBold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Cancelar", color = TextSecondary)
+            }
+        },
+        containerColor = SurfaceDark,
+        titleContentColor = TextPrimary,
+        textContentColor = TextSecondary
+    )
 }

@@ -6,6 +6,7 @@ import android.service.quicksettings.TileService
 import com.lanremote.android.MainActivity
 import com.lanremote.android.data.model.TVKey
 import com.lanremote.android.data.network.KtorTVClient
+import com.lanremote.android.data.network.RoapResult
 import com.lanremote.android.data.repository.SettingsRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -31,9 +32,10 @@ class QuickControlTile : TileService() {
             val config = settingsRepo.tvConfigFlow.firstOrNull() ?: return@launch
             // Dispara comando de Mudo na TV
             val result = tvClient.sendCommand(config, TVKey.MUTE.code)
+            result.newSession?.let { settingsRepo.updateSession(it) }
 
             val tile = qsTile ?: return@launch
-            if (result.isSuccess) {
+            if (result is RoapResult.Ok) {
                 tile.state = if (tile.state == Tile.STATE_ACTIVE) Tile.STATE_INACTIVE else Tile.STATE_ACTIVE
                 tile.subtitle = "Mudo alternado"
             } else {

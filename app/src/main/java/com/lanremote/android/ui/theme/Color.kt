@@ -22,3 +22,9 @@ val ColorRed = Color(0xFFE11D48)
 val ColorGreen = Color(0xFF16A34A)
 val ColorYellow = Color(0xFFCA8A04)
 val ColorBlue = Color(0xFF2563EB)
+
+// Estado da TV
+val TurningOnBlue = Color(0xFF66B3FF)
+val UnknownGray = Color(0xFF8C8C94)
+val MutedOrange = Color(0xFFF59E0B)
+val VolumeCyan = Color(0xFF66CCFF)

@@ -42,20 +42,40 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    // O ViewModel sobrevive à tela: a consulta periódica só roda com o app visível.
+    override fun onStart() {
+        super.onStart()
+        viewModel.startPollingStatus()
+    }
+
+    override fun onStop() {
+        viewModel.stopPollingStatus()
+        super.onStop()
+    }
+
     /**
-     * Interceptação dos botões físicos de volume do smartphone para controlar o volume da TV diretamente.
+     * Os botões físicos de volume do celular controlam o volume da TV. Com a TV desligada eles
+     * voltam a mexer no volume do próprio celular.
      */
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-        return when (keyCode) {
-            KeyEvent.KEYCODE_VOLUME_UP -> {
-                viewModel.sendKey(TVKey.VOLUME_UP)
-                true
-            }
-            KeyEvent.KEYCODE_VOLUME_DOWN -> {
-                viewModel.sendKey(TVKey.VOLUME_DOWN)
-                true
-            }
-            else -> super.onKeyDown(keyCode, event)
+        val key = volumeKey(keyCode) ?: return super.onKeyDown(keyCode, event)
+        if (!viewModel.uiState.value.canSendKeys) return super.onKeyDown(keyCode, event)
+        if ((event?.repeatCount ?: 0) > 0) {
+            viewModel.sendRepeatedKey(key)
+        } else {
+            viewModel.sendKey(key)
         }
+        return true
+    }
+
+    override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean {
+        if (volumeKey(keyCode) != null && viewModel.uiState.value.canSendKeys) return true
+        return super.onKeyUp(keyCode, event)
+    }
+
+    private fun volumeKey(keyCode: Int): TVKey? = when (keyCode) {
+        KeyEvent.KEYCODE_VOLUME_UP -> TVKey.VOLUME_UP
+        KeyEvent.KEYCODE_VOLUME_DOWN -> TVKey.VOLUME_DOWN
+        else -> null
     }
 }

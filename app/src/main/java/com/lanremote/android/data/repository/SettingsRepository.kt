@@ -78,6 +78,13 @@ class SettingsRepository(private val context: Context) {
         }
     }
 
+    /** Modelo lido da TV ("47LN5700-SA_11"), para o cabeçalho. */
+    suspend fun updateModelName(modelName: String) {
+        context.dataStore.edit { prefs ->
+            prefs[KEY_MODEL_NAME] = modelName
+        }
+    }
+
     suspend fun updateHostAndPort(host: String, port: Int) {
         context.dataStore.edit { prefs ->
             prefs[KEY_HOST] = host

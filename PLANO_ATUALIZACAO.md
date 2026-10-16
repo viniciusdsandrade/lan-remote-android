@@ -559,7 +559,7 @@ Se alguma parte não puder ser feita (TV ou aparelho indisponível), diga isso n
   estava em standby)
 - [x] Fase 4: ligar pela interface e Ajustes (Ajustes em tela cheia no lugar do controle, não num `Dialog`: a janela
   do diálogo pedia a altura da tela inteira e o sistema a encaixava entre as barras, cortando o fim da rolagem)
-- [ ] Fase 5: controle didático
+- [x] Fase 5: controle didático
 - [ ] Fase 6: ícone e bloco rápido
 - [ ] Fase 7: CI, README e versão
 - [ ] Fase 8: validação na TV real e PR

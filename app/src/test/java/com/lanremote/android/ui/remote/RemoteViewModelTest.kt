@@ -15,6 +15,7 @@ import com.lanremote.android.data.network.RoapResult
 import com.lanremote.android.data.network.SsdpScanner
 import com.lanremote.android.data.repository.SettingsRepository
 import com.lanremote.android.system.HapticFeedbackHelper
+import com.lanremote.android.ui.help.Help
 import io.mockk.coEvery
 import io.mockk.coVerify
 import io.mockk.every
@@ -71,6 +72,7 @@ class RemoteViewModelTest {
         coEvery { tvClient.getVolumeInfo(any()) } returns RoapResult.Ok(volume)
         coEvery { tvClient.getCurrentChannel(any()) } returns RoapResult.Ok(ChannelInfo(inputSource = "HDMI2", channel = null))
         coEvery { tvClient.sendCommand(any(), any()) } returns RoapResult.Ok(Unit)
+        coEvery { tvClient.fetchModelName(any(), any()) } returns "47LN5700-SA_11"
     }
 
     @After
@@ -124,7 +126,7 @@ class RemoteViewModelTest {
         viewModel.sendKey(TVKey.VOLUME_UP)
         advanceUntilIdle()
 
-        coVerify(exactly = 1) { tvClient.sendCommand(defaultConfig, TVKey.VOLUME_UP.code) }
+        coVerify(exactly = 1) { tvClient.sendCommand(match { it.host == "192.168.1.100" && it.sessionId == "sess_1" }, TVKey.VOLUME_UP.code) }
     }
 
     @Test
@@ -139,7 +141,7 @@ class RemoteViewModelTest {
         advanceUntilIdle()
 
         assertFalse(viewModel.uiState.value.isPowerOffDialogOpen)
-        coVerify(exactly = 1) { tvClient.sendCommand(defaultConfig, TVKey.POWER.code) }
+        coVerify(exactly = 1) { tvClient.sendCommand(match { it.host == "192.168.1.100" && it.sessionId == "sess_1" }, TVKey.POWER.code) }
         assertEquals("POWER aceito só desliga", TVPowerState.OFF, viewModel.uiState.value.powerState)
     }
 
@@ -537,5 +539,60 @@ class RemoteViewModelTest {
         viewModel.refreshStatus()
         advanceUntilIdle()
         coVerify(exactly = 2) { tvBoxLink.discover(any()) }
+    }
+
+    // Controle didático
+
+    @Test
+    fun explain_showsTheHelpWithoutTouchingTheTv() = runTest(testDispatcher) {
+        val viewModel = newViewModel()
+        val queriesBefore = 1   // a consulta inicial
+
+        viewModel.explain(Help.input)
+        runCurrent()
+
+        assertEquals(Help.input, viewModel.uiState.value.explaining)
+        coVerify(exactly = 0) { tvClient.sendCommand(any(), any()) }
+        coVerify(exactly = queriesBefore) { tvClient.getVolumeInfo(any()) }
+    }
+
+    @Test
+    fun explanation_goesAwayAfterSevenSeconds() = runTest(testDispatcher) {
+        val viewModel = newViewModel()
+
+        viewModel.explain(Help.mute)
+        advanceTimeBy(6_999)
+        assertEquals(Help.mute, viewModel.uiState.value.explaining)
+
+        viewModel.explain(Help.home)   // outra explicação recomeça a contagem
+        advanceTimeBy(6_999)
+        assertEquals(Help.home, viewModel.uiState.value.explaining)
+        advanceTimeBy(2)
+        assertNull(viewModel.uiState.value.explaining)
+    }
+
+    @Test
+    fun guide_opensAndClosesTheExplanation() = runTest(testDispatcher) {
+        val viewModel = newViewModel()
+        viewModel.explain(Help.ok)
+
+        viewModel.openGuide()
+        assertTrue(viewModel.uiState.value.isGuideOpen)
+        assertNull(viewModel.uiState.value.explaining)
+
+        viewModel.closeGuide()
+        assertFalse(viewModel.uiState.value.isGuideOpen)
+    }
+
+    @Test
+    fun tvModel_isReadOnceAndSaved() = runTest(testDispatcher) {
+        val viewModel = newViewModel()
+
+        viewModel.refreshStatus()
+        advanceUntilIdle()
+
+        assertEquals("47LN5700-SA_11", viewModel.uiState.value.config.modelName)
+        coVerify(exactly = 1) { tvClient.fetchModelName("192.168.1.100", 8080) }
+        coVerify(exactly = 1) { settingsRepo.updateModelName("47LN5700-SA_11") }
     }
 }

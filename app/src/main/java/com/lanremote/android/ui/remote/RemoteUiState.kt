@@ -5,6 +5,7 @@ import com.lanremote.android.data.model.TVConfig
 import com.lanremote.android.data.model.TVPowerState
 import com.lanremote.android.data.model.TVStatus
 import com.lanremote.android.data.network.DiscoveredTV
+import com.lanremote.android.ui.help.ControlHelp
 
 /** Onde está o pareamento com a TV Box (uma vez só, em Ajustes). */
 sealed interface BoxPairingStage {
@@ -36,7 +37,12 @@ data class RemoteUiState(
     val powerOnError: String? = null,
     val boxPairingStage: BoxPairingStage = BoxPairingStage.Idle,
     val discoveredBoxes: List<AndroidTvBox> = emptyList(),
-    val boxCodeError: String? = null
+    val boxCodeError: String? = null,
+
+    // Controle didático
+    /** O controle sendo explicado agora (um dedo segurou o botão). */
+    val explaining: ControlHelp? = null,
+    val isGuideOpen: Boolean = false
 ) {
     /** Teclas só vão para a TV ligada (ou enquanto a primeira consulta não terminou). */
     val canSendKeys: Boolean

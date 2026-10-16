@@ -39,6 +39,9 @@ class KtorTVClient(
     companion object {
         const val USER_AGENT = "lg_roap_control/1.0.0 (android)"
         const val CONTENT_TYPE_ATOM_XML = "application/atom+xml; charset=utf-8"
+
+        /** Só a descrição UDAP (`rootservice.xml`) quer "UDAP/2.0" no User-Agent; o ROAP recusa. */
+        const val UDAP_USER_AGENT = "Android/1.0 UDAP/2.0 lg_roap_control/1.0.0"
         private const val XML_HEADER = """<?xml version="1.0" encoding="utf-8"?>"""
 
         /** `<major>` de `cur_channel` quando não há canal sintonizado (HDMI, AV…). */
@@ -139,6 +142,28 @@ class KtorTVClient(
                 channel = extractXmlTag(body, "major")?.takeIf { it.isNotEmpty() && it != NO_CHANNEL }
             )
         }
+
+    /**
+     * Modelo da TV pela descrição UDAP ("47LN5700-SA_11"), que responde sem pareamento. Nulo se a
+     * TV não disser.
+     */
+    suspend fun fetchModelName(host: String, port: Int = 8080): String? = withContext(Dispatchers.IO) {
+        try {
+            val response = client.get("http://$host:$port/udap/api/data") {
+                parameter("target", "rootservice.xml")
+                header(HttpHeaders.UserAgent, UDAP_USER_AGENT)
+                header(HttpHeaders.Connection, "close")
+            }
+            if (response.status == HttpStatusCode.OK) {
+                extractXmlTag(response.bodyAsText(), "modelName")?.takeIf { it.isNotBlank() }
+            } else {
+                null
+            }
+        } catch (e: Exception) {
+            ensureActive()
+            null
+        }
+    }
 
     /**
      * Roda a requisição com a sessão salva; num 401 refaz o pareamento com a chave salva e repete

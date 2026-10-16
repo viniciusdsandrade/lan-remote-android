@@ -1,7 +1,6 @@
 package com.lanremote.android.ui.components
 
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -10,29 +9,28 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.PowerSettingsNew
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.lanremote.android.data.model.TVPowerState
-import com.lanremote.android.ui.theme.ButtonBackground
+import com.lanremote.android.ui.help.ControlHelp
+import com.lanremote.android.ui.help.Help
 import com.lanremote.android.ui.theme.MutedOrange
 import com.lanremote.android.ui.theme.OfflineRed
 import com.lanremote.android.ui.theme.OnlineGreen
-import com.lanremote.android.ui.theme.PowerRed
-import com.lanremote.android.ui.theme.SurfaceBorder
-import com.lanremote.android.ui.theme.SurfaceDark
 import com.lanremote.android.ui.theme.TextPrimary
 import com.lanremote.android.ui.theme.TextSecondary
 import com.lanremote.android.ui.theme.TurningOnBlue
@@ -54,112 +52,118 @@ fun TVPowerState.color(): Color = when (this) {
     TVPowerState.UNKNOWN -> UnknownGray
 }
 
+/** "TV LG 47LN5700" a partir do modelName da TV ("47LN5700-SA_11"); só "TV LG" se não souber. */
+fun tvDisplayName(modelName: String): String {
+    val model = modelName.substringBefore('-').trim()
+    return if (Regex("^\\d{2}[A-Z]{2,3}\\d{3,4}[A-Z0-9]*$").matches(model)) "TV LG $model" else "TV LG"
+}
+
+private val HeaderButtonBackground = Color(0xFF333338)
+
+/**
+ * Cabeçalho: LED, nome da TV e o estado dela (Ligada, Desligada, Ligando…, Verificando…), com
+ * volume e entrada quando ligada; botões do Guia dos botões e dos Ajustes.
+ */
 @Composable
 fun StatusHeader(
+    title: String,
     powerState: TVPowerState,
-    deviceTitle: String,
     volumeLevel: Int,
     isMuted: Boolean,
     inputSource: String?,
-    powerTurnsOn: Boolean,
-    powerEnabled: Boolean,
-    onPowerClick: () -> Unit,
-    onSettingsClick: () -> Unit,
+    onOpenGuide: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onExplain: (ControlHelp) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val shape = RoundedCornerShape(20.dp)
+    val haptic = LocalHapticFeedback.current
+    val explain: (ControlHelp) -> Unit = {
+        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+        onExplain(it)
+    }
 
     Row(
         modifier = modifier
             .fillMaxWidth()
-            .clip(shape)
-            .background(SurfaceDark)
-            .border(1.dp, SurfaceBorder, shape)
-            .padding(horizontal = 16.dp, vertical = 12.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
+            .padding(vertical = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(
-            modifier = Modifier.weight(1f),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(10.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(12.dp)
-                    .clip(CircleShape)
-                    .background(powerState.color())
+        Box(
+            modifier = Modifier
+                .size(10.dp)
+                .clip(CircleShape)
+                .background(powerState.color())
+        )
+
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                fontSize = 15.sp,
+                fontWeight = FontWeight.Bold,
+                color = TextPrimary,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.semantics { heading() }
             )
-
-            Column {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
                 Text(
-                    text = deviceTitle,
-                    fontSize = 15.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = TextPrimary,
-                    maxLines = 1
+                    text = powerState.label(),
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.SemiBold,
+                    color = powerState.color(),
+                    modifier = Modifier.semantics { contentDescription = "TV ${powerState.label()}" }
                 )
-
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
+                if (powerState == TVPowerState.ON) {
+                    Separator()
                     Text(
-                        text = powerState.label(),
+                        text = if (isMuted) "Mudo" else "Vol $volumeLevel",
                         fontSize = 12.sp,
                         fontWeight = FontWeight.SemiBold,
-                        color = powerState.color()
+                        color = if (isMuted) MutedOrange else VolumeCyan,
+                        modifier = Modifier.controlHelp(Help.volumeStatus, onClick = { explain(Help.volumeStatus) }, onExplain = explain,
+                            state = if (isMuted) "Mudo" else "Volume $volumeLevel")
                     )
-
-                    if (powerState == TVPowerState.ON) {
-                        Text(text = "•", fontSize = 10.sp, color = TextSecondary)
-                        Text(
-                            text = if (isMuted) "Mudo" else "Vol $volumeLevel",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = if (isMuted) MutedOrange else VolumeCyan
-                        )
-                        Text(text = "•", fontSize = 10.sp, color = TextSecondary)
-                        Text(
-                            text = inputSource ?: "TV",
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.SemiBold,
-                            color = TextPrimary
-                        )
-                    }
+                    Separator()
+                    Text(
+                        text = inputSource ?: "TV",
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.SemiBold,
+                        color = TextPrimary,
+                        modifier = Modifier.controlHelp(Help.inputStatus, onClick = { explain(Help.inputStatus) }, onExplain = explain,
+                            state = inputSource ?: "TV")
+                    )
                 }
             }
         }
 
-        Row(
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            IconButton(
-                onClick = onSettingsClick,
-                modifier = Modifier
-                    .size(48.dp)
-                    .clip(CircleShape)
-                    .background(ButtonBackground)
-                    .border(1.dp, SurfaceBorder, CircleShape)
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Settings,
-                    contentDescription = "Ajustes",
-                    tint = TextPrimary,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-
-            RemoteButton(
-                onClick = { if (powerEnabled) onPowerClick() },
-                icon = Icons.Default.PowerSettingsNew,
-                text = if (powerTurnsOn) "Ligar" else "Desligar",
-                backgroundColor = if (powerTurnsOn) TurnOnGreen else PowerRed,
-                contentColor = Color.White,
-                shapeRadius = 24.dp,
-                modifier = Modifier.size(48.dp)
-            )
-        }
+        RemoteButton(
+            help = Help.guideSheet,
+            onClick = onOpenGuide,
+            onExplain = onExplain,
+            label = "",
+            backgroundColor = HeaderButtonBackground,
+            borderColor = Color.Transparent,
+            shape = CircleShape,
+            modifier = Modifier.size(48.dp)
+        )
+        RemoteButton(
+            help = Help.settings,
+            onClick = onOpenSettings,
+            onExplain = onExplain,
+            label = "",
+            backgroundColor = HeaderButtonBackground,
+            borderColor = Color.Transparent,
+            shape = CircleShape,
+            modifier = Modifier.size(48.dp)
+        )
     }
+}
+
+@Composable
+private fun Separator() {
+    Text("•", fontSize = 10.sp, color = TextSecondary, modifier = Modifier.clearAndSetSemantics {})
 }

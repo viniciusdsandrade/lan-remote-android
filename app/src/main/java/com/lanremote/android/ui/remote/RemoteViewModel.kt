@@ -15,6 +15,7 @@ import com.lanremote.android.data.network.RoapResult
 import com.lanremote.android.data.network.SsdpScanner
 import com.lanremote.android.data.repository.SettingsRepository
 import com.lanremote.android.system.HapticFeedbackHelper
+import com.lanremote.android.ui.help.ControlHelp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -52,6 +53,9 @@ class RemoteViewModel(
         private const val BOX_REFRESH_MILLIS = 5 * 60_000L
         private const val BOX_REFRESH_DISCOVERY_MILLIS = 2_000L
 
+        /** A explicação de um botão some sozinha depois disso. */
+        private const val EXPLANATION_MILLIS = 7_000L
+
         private val VOLUME_KEYS = setOf(TVKey.VOLUME_UP, TVKey.VOLUME_DOWN, TVKey.MUTE)
         private val STEP_KEYS = setOf(
             TVKey.VOLUME_UP, TVKey.VOLUME_DOWN, TVKey.CHANNEL_UP, TVKey.CHANNEL_DOWN,
@@ -72,6 +76,8 @@ class RemoteViewModel(
     private var activePairing: BoxPairing? = null
     private var pairingCandidate: AndroidTvBox? = null
     private var lastBoxRefresh: Long? = null
+    private var hideExplanation: Job? = null
+    private var modelChecked = false
 
     init {
         // A TV Box primeiro: a primeira consulta à TV já sabe se dá para ligá-la.
@@ -87,6 +93,7 @@ class RemoteViewModel(
                 configLoaded = true
                 if (address != config.host to config.port) {
                     address = config.host to config.port
+                    modelChecked = false
                     checkTv()
                 }
             }
@@ -254,6 +261,8 @@ class RemoteViewModel(
             }
         }
 
+        readModelOnce()
+
         val channel = tvClient.getCurrentChannel(_uiState.value.config)
         keepSession(channel.newSession)
         if (channel is RoapResult.Ok) {
@@ -267,6 +276,24 @@ class RemoteViewModel(
             }
         }
         refreshBoxAddressIfNeeded()
+    }
+
+    /** O modelo da TV, para o cabeçalho ("TV LG 47LN5700"): uma vez por sessão (e por endereço). */
+    private fun readModelOnce() {
+        if (modelChecked) return
+        modelChecked = true
+        val config = _uiState.value.config
+        viewModelScope.launch {
+            val model = tvClient.fetchModelName(config.host, config.port)
+            if (model == null) {
+                modelChecked = false   // tenta de novo na próxima consulta
+                return@launch
+            }
+            if (model != _uiState.value.config.modelName) {
+                _uiState.update { it.copy(config = it.config.copy(modelName = model)) }
+                settingsRepo.updateModelName(model)
+            }
+        }
     }
 
     /** Qualquer resposta HTTP (200 ou 401) prova que a rede da TV está de pé. */
@@ -378,15 +405,36 @@ class RemoteViewModel(
     fun selectDiscoveredTV(tv: DiscoveredTV) {
         haptic.performClick()
         viewModelScope.launch {
-            val updated = _uiState.value.config.copy(
-                host = tv.ip,
-                port = tv.port,
-                modelName = tv.name
-            )
+            val updated = _uiState.value.config.copy(host = tv.ip, port = tv.port)
             settingsRepo.saveConfig(updated)
             _uiState.update { it.copy(config = updated) }
             checkTv()
         }
+    }
+
+    // Controle didático: segurar um botão explica o que ele faz, sem mandar nada para a TV.
+
+    fun explain(help: ControlHelp) {
+        _uiState.update { it.copy(explaining = help) }
+        hideExplanation?.cancel()
+        hideExplanation = viewModelScope.launch {
+            delay(EXPLANATION_MILLIS)
+            _uiState.update { it.copy(explaining = null) }
+        }
+    }
+
+    fun closeExplanation() {
+        hideExplanation?.cancel()
+        _uiState.update { it.copy(explaining = null) }
+    }
+
+    fun openGuide() {
+        closeExplanation()
+        _uiState.update { it.copy(isGuideOpen = true) }
+    }
+
+    fun closeGuide() {
+        _uiState.update { it.copy(isGuideOpen = false) }
     }
 
     fun toggleKeypad() {

@@ -4,11 +4,11 @@
 > fim antes de mexer no código: as seções 1 a 5 explicam o porquê de cada decisão; as seções 6 a 8 dizem
 > o que fazer, em que ordem, e como provar que funciona.
 >
-> - **Repositório:** `viniciusdsandrade/lan-remote-android` (público). Clone local: `~/lan-remote-android`.
+> - **Repositório:** `viniciusdsandrade/lan-remote-android` (público).
 > - **Branch de trabalho:** `feat/ligar-tv-pela-tvbox`. Ela já contém este plano, e o PR em rascunho dela é o PR da implementação.
 > - **Escrito em:** 2026-10-16, logo depois da mesma atualização nos apps de Mac e iOS. Nada daqui foi implementado ainda.
-> - **Referência de paridade:** iOS `viniciusdsandrade/lan-remote-ios`, commits `a03a8f9` (TV Box + botões didáticos) e
->   `f486dcc` (ícone). Mac: `~/lan-remote-mac/mac_app` (só local, sem git).
+> - **Referência de paridade:** iOS `viniciusdsandrade/lan-remote-ios` (commits da TV Box + botões didáticos e do
+>   ícone). Mac: `viniciusdsandrade/lan-remote-mac`, pasta `mac_app`.
 > - **Idioma:** código e identificadores como já estão no projeto; textos de interface, commits e PR em português.
 
 ---
@@ -39,23 +39,23 @@ Além de ligar a TV, o usuário pediu no Mac e no iOS, e quer igual no Android:
 - **nenhuma mensagem de log** na tela ("Power enviado", "Falha: …");
 - ícone do app com a mesma cara do controle do Mac e do iOS.
 
-## 2. Estado atual (linha de base: `main` @ `d3b4455`)
+## 2. Estado atual (linha de base: `main` no commit "feat: implement native Android LAN remote control with Compose and Ktor")
 
 App Kotlin + Jetpack Compose + Ktor CIO + DataStore; `minSdk 26`, `compileSdk`/`targetSdk 35`, AGP 8.7.3,
 Kotlin 2.0.21, Gradle 8.11.1. Build e testes rodados em 2026-10-16:
 
 ```bash
-cd ~/lan-remote-android
+cd lan-remote-android
 export JAVA_HOME=/opt/homebrew/opt/openjdk@21/libexec/openjdk.jdk/Contents/Home
 ./gradlew --no-daemon test assembleDebug     # BUILD SUCCESSFUL: 11 testes, 0 falhas
 ```
 
 Os 11 testes: `TVKeyTest` (2), `KtorTVClientTest` (5), `RemoteViewModelTest` (4). Já `./gradlew lintDebug` **falha**:
 5 erros, todos no `QuickControlTile` (P7 e P11 abaixo), e 64 avisos (36 de versões de dependência, 18 de recursos sem
-uso, 2 `MonochromeLauncherIcon`, entre outros). Ferramentas nesta máquina:
-SDK em `~/Library/Android/sdk` (plataformas 35 e 37; build-tools 34, 36 e 37), `adb` em
-`~/Library/Android/sdk/platform-tools/adb` (fora do `PATH`), AVD `Pixel_9`, Android Studio em
-`~/Applications/Android Studio.app`. Não há CI (`.github/workflows` não existe).
+uso, 2 `MonochromeLauncherIcon`, entre outros). Ferramentas na máquina de desenvolvimento:
+Android SDK em `$ANDROID_HOME` (plataformas 35 e 37; build-tools 34, 36 e 37), `adb` em
+`$ANDROID_HOME/platform-tools/adb` (fora do `PATH`), um AVD de Pixel 9 e o Android Studio. Não há CI
+(`.github/workflows` não existe).
 
 ### 2.1 Problemas encontrados no código (todos entram no escopo)
 
@@ -75,7 +75,7 @@ SDK em `~/Library/Android/sdk` (plataformas 35 e 37; build-tools 34, 36 e 37), `
 
 ## 3. Objetivo
 
-Deixar o app Android **no mesmo ponto do iOS** (commits `a03a8f9` e `f486dcc`):
+Deixar o app Android **no mesmo ponto do iOS** (TV Box, botões didáticos e ícone):
 
 1. **ROAP correto**: teclas e consultas funcionam na TV real, e o estado da TV fica visível (Ligada, Desligada,
    Ligando…, Verificando…).
@@ -125,10 +125,10 @@ Alterados: `KtorTVClient.kt`, `TVKey.kt`, `TVStatus.kt`, `SettingsRepository.kt`
 arquivos de teste existentes, `README.md` e `.gitignore`.
 
 De onde portar (leia a fonte antes de escrever o equivalente). Links:
-`https://github.com/viniciusdsandrade/lan-remote-ios/blob/f486dcc/<caminho>`; o clone local do iOS fica em
-`~/lan-remote-ios`.
+`https://github.com/viniciusdsandrade/lan-remote-ios/blob/main/<caminho>` e
+`https://github.com/viniciusdsandrade/lan-remote-mac/blob/main/mac_app/<arquivo>`.
 
-| Android | iOS (`lan-remote-ios` @ `f486dcc`) | Mac (`lan-remote-mac/mac_app`) |
+| Android | iOS (`lan-remote-ios`) | Mac (`lan-remote-mac/mac_app`) |
 |---|---|---|
 | Proto, PairingMath, MacAddress, WakeOnLan, AndroidTvError | `LanRemote/Services/AndroidTVProtocol.swift` | `AndroidTVRemote.swift` |
 | TlsChannel, AndroidTvPairing, RemoteSession, AndroidTvRemote | `LanRemote/Services/AndroidTVRemote.swift` | `AndroidTVRemote.swift` |
@@ -446,7 +446,7 @@ squircle, tema claro e escuro, ícone temático).
 Cada fase termina com `./gradlew --no-daemon testDebugUnitTest assembleDebug` verde e um commit. Marque a fase na
 seção 9 no mesmo commit.
 
-**Fase 0: preparar.** `git -C ~/lan-remote-android fetch origin`, `git switch feat/ligar-tv-pela-tvbox`,
+**Fase 0: preparar.** `git fetch origin`, `git switch feat/ligar-tv-pela-tvbox`,
 `git pull --ff-only`. Exporte o `JAVA_HOME` da seção 2 e confirme a linha de base (11 testes). Acrescente `.kotlin/`
 ao `.gitignore`.
 
@@ -521,10 +521,10 @@ ao `.gitignore`.
 
 - **Avise o usuário** antes de desligar ou ligar a TV: é a TV da sala dele.
 - Aparelho: pergunte se há um celular Android para testar (`adb devices`). Senão, use o AVD
-  (`~/Library/Android/sdk/emulator/emulator -avd Pixel_9`) com as ressalvas da seção 5.
+  (`$ANDROID_HOME/emulator/emulator -avd <nome do AVD>`) com as ressalvas da seção 5.
 - Instalação e inspeção: `./gradlew installDebug` (ou `adb install -r app/build/outputs/apk/debug/app-debug.apk`);
   tela com `adb exec-out screencap -p > tela.png`; toques com `adb shell input tap X Y` e `adb shell uiautomator dump`.
-- Conferência independente do app: `python3 ~/lan-remote-mac/lg_roap_control.py status` mostra
+- Conferência independente do app: `python3 lg_roap_control.py status` (repositório `lan-remote-mac`) mostra
   volume, entrada e contexto da TV pela sessão do Mac (falha quando a TV está em standby).
 - Os códigos de pareamento (ROAP e TV Box) aparecem **na tela da TV**: peça ao usuário para ler, é uma vez só.
 

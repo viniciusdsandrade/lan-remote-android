@@ -58,4 +58,16 @@ class MacAddressTest {
             box.copy(mac = "bobagem").wakeMacs.size
         )
     }
+
+    @Test
+    fun targets_includeUnicastAndSubnetBroadcast() {
+        assertEquals(
+            listOf("192.168.1.101", "192.168.1.255", "255.255.255.255"),
+            WakeOnLan.targets("192.168.1.101")
+        )
+        assertEquals(
+            listOf("fe80::1", "255.255.255.255"),
+            WakeOnLan.targets("fe80::1")
+        )
+    }
 }

@@ -385,7 +385,7 @@ class RemoteViewModelTest {
         viewModel.turnOn()
         advanceUntilIdle()
         assertEquals(
-            "A TV Box não acordou pelo Wi-Fi. Se o IP dela mudou, ligue a TV uma vez pelo controle e o app atualiza o endereço.",
+            "A TV Box não acordou pelo Wi-Fi. Confira se o modo de energia dela está em 'Sempre conectado' e se o IP não mudou.",
             viewModel.uiState.value.powerOnError
         )
 
@@ -534,6 +534,23 @@ class RemoteViewModelTest {
         viewModel.refreshStatus()
         advanceUntilIdle()
         coVerify(exactly = 1) { tvBoxLink.discover(any()) }
+
+        advanceTimeBy(5 * 60_000L)
+        viewModel.refreshStatus()
+        advanceUntilIdle()
+        coVerify(exactly = 2) { tvBoxLink.discover(any()) }
+    }
+
+    @Test
+    fun boxAddress_isRefreshedEvenWhenTvIsOff() = runTest(testDispatcher) {
+        boxFlow.value = pairedBox
+        coEvery { tvClient.getVolumeInfo(any()) } returns noAnswer
+        coEvery { tvBoxLink.discover(any()) } returns listOf(pairedBox.copy(host = "192.168.1.25", paired = false))
+
+        val viewModel = newViewModel()
+        assertEquals(TVPowerState.OFF, viewModel.uiState.value.powerState)
+        coVerify(exactly = 1) { tvBoxLink.discover(any()) }
+        coVerify { settingsRepo.saveTvBox(pairedBox.copy(host = "192.168.1.25")) }
 
         advanceTimeBy(5 * 60_000L)
         viewModel.refreshStatus()

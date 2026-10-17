@@ -28,16 +28,17 @@ Aplicativo Android nativo para controlar pela rede local (LAN) a TV LG NetCast (
 
 A TV não liga pela rede (em standby o controlador de rede dela desliga; Wake-on-LAN nela não tem efeito). O caminho é a **TV Box da sala** (Android TV / Google TV) ligada no HDMI, que acorda a TV pelo CEC:
 
-1. O app manda **Wake-on-LAN** para a TV Box: direto para o último IP dela e em **broadcast** (sub-rede do Wi-Fi e `255.255.255.255`), que a acorda mesmo se o IP tiver mudado. Ela dorme fundo, mas a rede volta por alguns segundos (a porta do controle responde em ~1 s).
+1. O app manda **Wake-on-LAN** para a TV Box (unicast + broadcast de sub-rede e `255.255.255.255`, reenviando a cada ciclo de sondagem para que mesmo com o cache ARP frio a resolução ARP ocorra na primeira tentativa e o pacote mágico chegue em seguida). A rede da TV Box responde na porta do controle em ~1–2 s.
 2. Nessa janela o app aperta **POWER** pelo protocolo do controle remoto do Android TV (o mesmo do app Google TV: portas 6466/6467, TLS com certificado próprio, mensagens protobuf). Se a tela da TV Box já estava ligada, o app a põe para dormir, espera 3 s e a acorda de novo: só um despertar novo manda o One Touch Play.
 3. Ao acordar, a TV Box manda **One Touch Play** pelo HDMI-CEC: a TV liga, já na entrada dela. A imagem volta em segundos; a rede da TV, em ~40–55 s, e aí o controle volta a responder (o app consulta a TV a cada 1,5 s por até 90 s).
 
 Uma vez só, em **Ajustes › Ligar a TV pelo app**: com a TV ligada na entrada da TV Box, toque em **Parear** e digite o código de 6 caracteres que aparece na tela (o primeiro par é um checksum: um erro de digitação é avisado sem incomodar a TV Box). O app gera uma chave RSA e um certificado no **AndroidKeyStore** (a chave nunca sai dele) e confere a conexão na porta 6466 sem apertar nada. Requisitos:
 
 - **SIMPLINK ligado na TV** (botão SIMPLINK do app, ou Configurações › Opções › SIMPLINK). Sem ele a TV ignora o CEC.
-- **HDMI-CEC ativo na TV Box** (Configurações › Sistema › Entradas).
+- **HDMI-CEC na TV Box** (Configurações › Tela e som ou Sistema › Entradas › HDMI-CEC): mantenha o **HDMI-CEC ativado** e desative **"Desligar automaticamente"**.
+- **Modo de energia na TV Box** (Configurações › Sistema › Energia e alimentação): selecione **Modo de consumo elevado (Sempre conectado)** e timer de desligamento em **Nunca**, para a TV Box não desconectar do Wi-Fi nem parar de responder ARP após horas em repouso.
 - **MAC do Wi-Fi da TV Box**: o Android não lê a tabela ARP, então o app tenta os endereços vizinhos ao MAC Bluetooth anunciado na rede (`bt=` do serviço `_androidtvremote2._tcp`; nesta TV Box o Wi-Fi é o Bluetooth − 1). Se não acordar, digite o MAC em Ajustes (na TV Box: Configurações › Sistema › Sobre › Status).
-- **IP fixo para a TV Box** (reserva DHCP no roteador): dormindo, ela só acorda pelo último endereço conhecido ou pelo broadcast. Com a TV ligada o app atualiza esse endereço pela rede a cada 5 min.
+- **IP fixo para a TV Box** (reserva DHCP no roteador): o app também atualiza o endereço pela rede automaticamente a cada 5 min.
 - **Celular no Wi-Fi de casa**: sem Wi-Fi o app avisa em vez de tentar.
 
 Não adianta usar `KEYCODE_TV_POWER` (177) nem `KEYCODE_WAKEUP` (224): a TV Box da sala ignora os dois.

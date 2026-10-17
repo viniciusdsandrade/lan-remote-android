@@ -218,12 +218,13 @@ private fun BoxSection(
         Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
             Text("Se a TV não ligar, confira:", fontSize = 12.sp, fontWeight = FontWeight.SemiBold, color = TextSecondary)
             Bullet("Na TV LG: SIMPLINK ligado (botão SIMPLINK do app, ou Configurações › Opções › SIMPLINK).")
-            Bullet("Na TV Box: Configurações › Sistema (ou Preferências do dispositivo) › Entradas › HDMI-CEC ativado.")
+            Bullet("Na TV Box (HDMI-CEC): Configurações › Tela e som (ou Sistema › Entradas) › HDMI-CEC ativado, e 'Desligar automaticamente' desativado.")
+            Bullet("Na TV Box (Energia): Configurações › Sistema › Energia e alimentação › Modo de energia em 'Consumo elevado (Sempre conectado)' e timer de desligamento em 'Nunca', para ela não sair do Wi-Fi após horas em espera.")
             Bullet(
                 "O celular não enxerga o MAC do Wi-Fi da TV Box; o app tenta os endereços vizinhos ao do Bluetooth " +
-                    "dela. Se não acordar, digite o MAC (está em Configurações › Sistema › Sobre › Status na TV Box)."
+                    "dela. Se não acordar, digite o MAC (Configurações › Sistema › Sobre › Status na TV Box)."
             )
-            Bullet("Reserve o IP da TV Box no roteador: dormindo, ela só acorda pelo último endereço conhecido.")
+            Bullet("Reserve o IP da TV Box no roteador para o endereço não mudar.")
         }
     }
 }

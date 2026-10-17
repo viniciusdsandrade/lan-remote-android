@@ -254,6 +254,7 @@ class RemoteViewModel(
         when (volume) {
             is RoapResult.Unreachable -> {
                 markUnreachable()
+                refreshBoxAddressIfNeeded()
                 return   // não adianta perguntar a entrada também
             }
             is RoapResult.Refused -> markAnswered()
@@ -511,7 +512,7 @@ class RemoteViewModel(
                 if (box.wakeMacs.isEmpty()) {
                     "A TV Box está em repouso e o app não sabe o MAC do Wi-Fi dela para acordá-la. Informe em Ajustes."
                 } else {
-                    "A TV Box não acordou pelo Wi-Fi. Se o IP dela mudou, ligue a TV uma vez pelo controle e o app atualiza o endereço."
+                    "A TV Box não acordou pelo Wi-Fi. Confira se o modo de energia dela está em 'Sempre conectado' e se o IP não mudou."
                 }
             )
             return
@@ -545,14 +546,14 @@ class RemoteViewModel(
     }
 
     /**
-     * Com a TV ligada a TV Box está acordada e aparece no NSD: a cada 5 min o app confere o IP e o
-     * MAC Bluetooth dela, para uma troca de DHCP não deixá-lo acordando o endereço errado depois.
+     * Mantém o IP da TV Box, o MAC Bluetooth e a entrada no cache ARP local atualizados sempre
+     * que ela estiver acessível na rede (com a TV ligada, ou em standby no modo "Sempre conectado").
      */
     private fun refreshBoxAddressIfNeeded() {
         val box = _uiState.value.box ?: return
         val now = clock()
         val last = lastBoxRefresh
-        if (!box.paired || _uiState.value.powerState != TVPowerState.ON) return
+        if (!box.paired) return
         if (last != null && now - last < BOX_REFRESH_MILLIS) return
         if (!tvBoxLink.isOnWifi()) return
         lastBoxRefresh = now

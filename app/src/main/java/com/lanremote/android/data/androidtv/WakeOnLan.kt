@@ -22,6 +22,26 @@ object WakeOnLan {
         val broadcast = ip or hostBits
         return InetAddress.getByAddress(ByteArray(4) { (broadcast ushr (24 - it * 8)).toByte() })
     }
+
+    /** Endereço unicast mais o broadcast da sub-rede /24 e o broadcast limitado 255.255.255.255. */
+    fun targets(host: String): List<String> {
+        val result = mutableListOf<String>()
+        val trimmed = host.trim()
+        if (trimmed.isNotEmpty()) {
+            result.add(trimmed)
+        }
+        val octets = trimmed.split(".")
+        if (octets.size == 4 && octets.all { it.toIntOrNull() in 0..255 }) {
+            val subnetBroadcast = octets.take(3).joinToString(".") + ".255"
+            if (!result.contains(subnetBroadcast)) {
+                result.add(subnetBroadcast)
+            }
+        }
+        if (!result.contains("255.255.255.255")) {
+            result.add("255.255.255.255")
+        }
+        return result
+    }
 }
 
 /**
@@ -33,9 +53,10 @@ class UdpWaker(private val broadcastAddresses: () -> List<InetAddress> = { empty
 
     override suspend fun wake(host: String, macs: List<String>) = withContext(Dispatchers.IO) {
         val targets = buildList {
-            runCatching { InetAddress.getByName(host) }.getOrNull()?.let(::add)
+            for (target in WakeOnLan.targets(host)) {
+                runCatching { InetAddress.getByName(target) }.getOrNull()?.let(::add)
+            }
             addAll(broadcastAddresses())
-            add(InetAddress.getByName("255.255.255.255"))
         }.distinct()
         DatagramSocket().use { socket ->
             socket.broadcast = true

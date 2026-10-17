@@ -42,7 +42,7 @@ class AndroidTvRemote(
         private const val PROBE_TIMEOUT_MS = 600
         private val PROBE_INTERVAL = 300.milliseconds
         private val WAKE_TIMEOUT_WITHOUT_MAC = 4.seconds
-        private val WAKE_TIMEOUT_WITH_MAC = 6.seconds
+        private val WAKE_TIMEOUT_WITH_MAC = 10.seconds
         private val SLEEP_BEFORE_REWAKE = 3.seconds
         private val REWAKE_TIMEOUT = 12.seconds
     }
@@ -83,8 +83,8 @@ class AndroidTvRemote(
         var current = host
         val wakeTimeout = if (wakeMacs.isEmpty()) WAKE_TIMEOUT_WITHOUT_MAC else WAKE_TIMEOUT_WITH_MAC
         waker.wake(current, wakeMacs)
-        if (!waitUntilReachable(current, wakeTimeout)) {
-            current = relocate()?.takeIf { it != current && waitUntilReachable(it, wakeTimeout) }
+        if (!waitUntilReachable(current, wakeTimeout, wakeMacs)) {
+            current = relocate()?.takeIf { it != current && waitUntilReachable(it, wakeTimeout, wakeMacs) }
                 ?: throw AndroidTvError.Asleep()
         }
         if (press(current, emptyList()) == true) {
@@ -93,17 +93,28 @@ class AndroidTvRemote(
             press(current, listOf(KEY_POWER))
             delay(SLEEP_BEFORE_REWAKE)
             waker.wake(current, wakeMacs)
-            waitUntilReachable(current, REWAKE_TIMEOUT)
+            waitUntilReachable(current, REWAKE_TIMEOUT, wakeMacs)
         }
         press(current, listOf(KEY_POWER))
         return current
     }
 
-    /** Tenta abrir a porta do controle a cada 300 ms até o prazo. */
-    suspend fun waitUntilReachable(host: String, timeout: Duration): Boolean {
+    /**
+     * Tenta abrir a porta do controle a cada 300 ms até o prazo, reenviando o Wake-on-LAN a cada
+     * tentativa sem sucesso para que um cache ARP frio resolva no primeiro pacote e receba o
+     * pacote mágico em seguida.
+     */
+    suspend fun waitUntilReachable(
+        host: String,
+        timeout: Duration,
+        wakeMacs: List<String> = emptyList()
+    ): Boolean {
         val deadline = timeSource.markNow() + timeout
         while (!deadline.hasPassedNow()) {
             if (probe.accepts(host, REMOTE_PORT, PROBE_TIMEOUT_MS)) return true
+            if (wakeMacs.isNotEmpty()) {
+                waker.wake(host, wakeMacs)
+            }
             delay(PROBE_INTERVAL)
         }
         return false

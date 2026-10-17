@@ -9,6 +9,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.fail
 import org.junit.Test
+import kotlin.time.Duration.Companion.seconds
 
 /** A sequência de ligar a TV, com falsos e tempo virtual. */
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -133,5 +134,32 @@ class AndroidTvRemoteTest {
             fail("deveria dizer que não está pareado")
         } catch (expected: AndroidTvError.NotPaired) {
         }
+    }
+
+    @Test
+    fun coldArp_resendsWakeOnLanDuringProbeMisses() = runTest {
+        var attempts = 0
+        val testRemote = AndroidTvRemote(
+            connector = { _, _ -> channel(Box.configure, Box.setActive) },
+            waker = { host, wakeMacs -> events += "wake $host ${wakeMacs.size} @$currentTime" },
+            probe = { _, _, timeoutMs ->
+                attempts++
+                if (attempts >= 3) {
+                    true
+                } else {
+                    delay(timeoutMs.toLong())
+                    false
+                }
+            },
+            device = device,
+            timeSource = testScheduler.timeSource
+        )
+
+        testRemote.waitUntilReachable("192.0.2.101", timeout = 5.seconds, wakeMacs = macs)
+
+        val wakeEvents = events.filter { it.startsWith("wake") }
+        assertEquals("reenvia o pacote mágico a cada tentativa sem resposta", 2, wakeEvents.size)
+        assertEquals("wake 192.0.2.101 3 @600", wakeEvents[0])
+        assertEquals("wake 192.0.2.101 3 @1500", wakeEvents[1])
     }
 }

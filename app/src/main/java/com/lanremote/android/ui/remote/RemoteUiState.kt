@@ -44,9 +44,9 @@ data class RemoteUiState(
     val explaining: ControlHelp? = null,
     val isGuideOpen: Boolean = false
 ) {
-    /** Teclas só vão para a TV ligada (ou enquanto a primeira consulta não terminou). */
+    /** Teclas só vão para a TV ligada (ou enquanto a primeira consulta não terminou), e só com endereço. */
     val canSendKeys: Boolean
-        get() = powerState == TVPowerState.ON || powerState == TVPowerState.UNKNOWN
+        get() = config.isConfigured && (powerState == TVPowerState.ON || powerState == TVPowerState.UNKNOWN)
 
     /** Com a TV Box pareada o app consegue ligar a TV. */
     val canTurnOnTv: Boolean

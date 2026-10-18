@@ -1,7 +1,8 @@
 package com.lanremote.android.data.model
 
 data class TVConfig(
-    val host: String = "192.0.2.100",
+    /** Vazio enquanto o app não achou a TV na rede (nem alguém digitou o endereço). */
+    val host: String = "",
     val port: Int = 8080,
     val pairingKey: String = "",
     val sessionId: String? = null,
@@ -9,4 +10,7 @@ data class TVConfig(
 ) {
     val baseUrl: String
         get() = "http://$host:$port"
+
+    val isConfigured: Boolean
+        get() = host.isNotBlank()
 }

@@ -13,6 +13,7 @@ import com.lanremote.android.data.network.DiscoveredTV
 import com.lanremote.android.data.network.KtorTVClient
 import com.lanremote.android.data.network.RoapResult
 import com.lanremote.android.data.network.SsdpScanner
+import com.lanremote.android.data.network.TvCandidates
 import com.lanremote.android.data.repository.SettingsRepository
 import com.lanremote.android.system.HapticFeedbackHelper
 import com.lanremote.android.ui.help.ControlHelp
@@ -52,6 +53,15 @@ class RemoteViewModel(
         /** Logo depois do POWER a TV ainda pode responder enquanto desliga: não volta a "Ligada". */
         private const val POWER_OFF_GRACE_MILLIS = 8_000L
 
+        /**
+         * Procurar a TV na rede: sem endereço salvo, a cada 30 s; enquanto ela liga, a cada 10 s (a
+         * rede dela volta em ~40–55 s); sumida do endereço salvo, a cada 2 min (o roteador pode ter
+         * dado outro IP a ela; em standby a busca só não acha nada).
+         */
+        private const val TV_SEARCH_UNCONFIGURED_MILLIS = 30_000L
+        private const val TV_SEARCH_TURNING_ON_MILLIS = 10_000L
+        private const val TV_SEARCH_MILLIS = 2 * 60_000L
+
         /** Com a TV ligada a TV Box está acordada e aparece no NSD: renova o endereço dela. */
         private const val BOX_REFRESH_MILLIS = 5 * 60_000L
         private const val BOX_REFRESH_DISCOVERY_MILLIS = 2_000L
@@ -83,6 +93,8 @@ class RemoteViewModel(
     private var poweredOffAt: Long? = null
     private var pairingCandidate: AndroidTvBox? = null
     private var lastBoxRefresh: Long? = null
+    private var lastTvSearch: Long? = null
+    private var searchingTv = false
     private var hideExplanation: Job? = null
     private var modelChecked = false
 
@@ -223,6 +235,11 @@ class RemoteViewModel(
 
     private suspend fun checkTv() {
         if (!configLoaded) return
+        if (!_uiState.value.config.isConfigured) {
+            // Primeiro uso: ninguém disse onde a TV está. Procura na rede em vez de perguntar a ninguém.
+            locateTv()
+            return
+        }
         if (refreshing) {
             refreshAgain = true   // a consulta em andamento repete no fim, para mostrar o valor novo
             return
@@ -255,6 +272,7 @@ class RemoteViewModel(
             is RoapResult.Unreachable -> {
                 markUnreachable()
                 refreshBoxAddressIfNeeded()
+                locateTv()
                 return   // não adianta perguntar a entrada também
             }
             is RoapResult.Refused -> markAnswered()
@@ -424,10 +442,74 @@ class RemoteViewModel(
     fun selectDiscoveredTV(tv: DiscoveredTV) {
         haptic.performClick()
         viewModelScope.launch {
-            val updated = _uiState.value.config.copy(host = tv.ip, port = tv.port)
+            val config = _uiState.value.config
+            val updated = config.copy(host = tv.ip, port = tv.port, modelName = tv.model ?: config.modelName)
             settingsRepo.saveConfig(updated)
             _uiState.update { it.copy(config = updated) }
             checkTv()
+        }
+    }
+
+    /**
+     * Acha a TV na rede sozinho: no primeiro uso (nenhum endereço salvo) e quando ela para de
+     * responder no endereço salvo, porque o roteador pode ter dado outro IP a ela. Só aceita uma TV
+     * LG que se apresentou pela descrição UDAP; com várias na rede, a escolha é de [TvCandidates.choose].
+     */
+    private fun locateTv() {
+        if (searchingTv) return
+        val state = _uiState.value
+        val interval = when {
+            state.powerState == TVPowerState.TURNING_ON -> TV_SEARCH_TURNING_ON_MILLIS
+            !state.config.isConfigured -> TV_SEARCH_UNCONFIGURED_MILLIS
+            else -> TV_SEARCH_MILLIS
+        }
+        val now = clock()
+        val last = lastTvSearch
+        if (last != null && now - last < interval) return
+        if (!tvBoxLink.isOnWifi()) {
+            if (!state.config.isConfigured) noTvFound(emptyList())
+            return
+        }
+        lastTvSearch = now
+        searchingTv = true
+        viewModelScope.launch {
+            try {
+                val found = ssdpScanner.discoverTVs()
+                val current = _uiState.value.config
+                val tv = TvCandidates.choose(found, current.host, current.modelName)
+                when {
+                    tv == null -> if (!current.isConfigured) noTvFound(found)
+                    tv.ip != current.host || tv.port != current.port -> useTv(tv)
+                }
+            } finally {
+                searchingTv = false
+            }
+        }
+    }
+
+    /** A TV foi achada em outro endereço (ou pela primeira vez): grava e consulta de novo. */
+    private suspend fun useTv(tv: DiscoveredTV) {
+        val config = _uiState.value.config
+        val updated = config.copy(host = tv.ip, port = tv.port, modelName = tv.model ?: config.modelName)
+        _uiState.update { it.copy(config = updated) }
+        settingsRepo.updateHostAndPort(tv.ip, tv.port)
+        tv.model?.let { settingsRepo.updateModelName(it) }
+        modelChecked = false
+        checkTv()
+    }
+
+    /** Sem endereço salvo e nenhuma TV que dê para escolher sozinho: o cartão diz o que fazer. */
+    private fun noTvFound(found: List<DiscoveredTV>) {
+        _uiState.update {
+            it.copy(
+                powerState = if (it.powerState == TVPowerState.TURNING_ON) it.powerState else TVPowerState.OFF,
+                discoveredTVs = found.ifEmpty { it.discoveredTVs },
+                powerOnError = if (found.size > 1) {
+                    "Achei mais de uma TV LG no Wi-Fi. Escolha a sua em Ajustes."
+                } else {
+                    "Não achei a TV no Wi-Fi. Com ela ligada, abra os Ajustes e toque em Buscar TVs."
+                }
+            )
         }
     }
 

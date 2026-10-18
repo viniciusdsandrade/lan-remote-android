@@ -451,7 +451,7 @@ private fun TvSection(
                 value = host,
                 onValueChange = onHostChange,
                 label = "IP da TV",
-                placeholder = "192.0.2.100",
+                placeholder = "achado sozinho na rede",
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 modifier = Modifier.weight(1f)
             )

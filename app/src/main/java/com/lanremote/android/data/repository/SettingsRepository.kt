@@ -32,7 +32,8 @@ class SettingsRepository(private val context: Context) {
         private val KEY_BOX_MAC = stringPreferencesKey("box_mac")
         private val KEY_BOX_BT_MAC = stringPreferencesKey("box_bt_mac")
 
-        const val DEFAULT_HOST = "192.0.2.100"
+        /** Sem endereço salvo o app procura a TV na rede sozinho. */
+        const val DEFAULT_HOST = ""
         const val DEFAULT_PORT = 8080
     }
 

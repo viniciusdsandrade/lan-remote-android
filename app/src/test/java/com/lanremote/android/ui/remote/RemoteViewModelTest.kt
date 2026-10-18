@@ -73,6 +73,7 @@ class RemoteViewModelTest {
         coEvery { tvClient.getCurrentChannel(any()) } returns RoapResult.Ok(ChannelInfo(inputSource = "HDMI2", channel = null))
         coEvery { tvClient.sendCommand(any(), any()) } returns RoapResult.Ok(Unit)
         coEvery { tvClient.fetchModelName(any(), any()) } returns "42LN5700-SA_11"
+        coEvery { ssdpScanner.discoverTVs() } returns emptyList()
     }
 
     @After
@@ -719,5 +720,96 @@ class RemoteViewModelTest {
 
         assertNull(viewModel.uiState.value.box)
         coVerify(exactly = 0) { settingsRepo.saveTvBox(any()) }
+    }
+
+    // Achar a TV sozinho (endereços da faixa de documentação: o repositório é público)
+
+    private val tvFoundOnTheNetwork = DiscoveredTV(ip = "192.0.2.17", port = 8080, name = "TV LG 42LN5700", model = "42LN5700-SA_11")
+
+    @Test
+    fun firstUse_findsTheTvByItselfAndSavesTheAddress() = runTest(testDispatcher) {
+        every { settingsRepo.tvConfigFlow } returns flowOf(TVConfig())
+        coEvery { ssdpScanner.discoverTVs() } returns listOf(tvFoundOnTheNetwork)
+
+        val viewModel = newViewModel()
+
+        val state = viewModel.uiState.value
+        assertEquals("192.0.2.17", state.config.host)
+        assertEquals(TVPowerState.ON, state.powerState)
+        coVerify { settingsRepo.updateHostAndPort("192.0.2.17", 8080) }
+        coVerify { settingsRepo.updateModelName("42LN5700-SA_11") }
+        coVerify(exactly = 0) { tvClient.getVolumeInfo(match { !it.isConfigured }) }
+    }
+
+    @Test
+    fun firstUse_withNoTvOnTheNetwork_saysWhatToDoWithoutAskingAnybody() = runTest(testDispatcher) {
+        every { settingsRepo.tvConfigFlow } returns flowOf(TVConfig())
+
+        val viewModel = newViewModel()
+
+        val state = viewModel.uiState.value
+        assertEquals(TVPowerState.OFF, state.powerState)
+        assertTrue(state.powerOnError.orEmpty().contains("Não achei a TV"))
+        assertFalse(state.canSendKeys)
+        coVerify(exactly = 0) { tvClient.getVolumeInfo(any()) }
+        coVerify(exactly = 0) { settingsRepo.updateHostAndPort(any(), any()) }
+    }
+
+    @Test
+    fun firstUse_withTwoTvs_letsTheUserChoose() = runTest(testDispatcher) {
+        every { settingsRepo.tvConfigFlow } returns flowOf(TVConfig())
+        val otherTv = tvFoundOnTheNetwork.copy(ip = "192.0.2.30", name = "TV LG 32LN5400", model = "32LN5400-SB_02")
+        coEvery { ssdpScanner.discoverTVs() } returns listOf(tvFoundOnTheNetwork, otherTv)
+
+        val viewModel = newViewModel()
+
+        val state = viewModel.uiState.value
+        assertEquals(2, state.discoveredTVs.size)
+        assertTrue(state.powerOnError.orEmpty().contains("mais de uma TV"))
+        coVerify(exactly = 0) { settingsRepo.updateHostAndPort(any(), any()) }
+    }
+
+    @Test
+    fun aTvThatGotANewAddress_isFoundAgain() = runTest(testDispatcher) {
+        // O roteador deu outro IP à TV: no endereço salvo ninguém responde, a busca acha a TV ligada.
+        coEvery { tvClient.getVolumeInfo(match { it.host == defaultConfig.host }) } returns noAnswer
+        coEvery { tvClient.getVolumeInfo(match { it.host == "192.0.2.17" }) } returns RoapResult.Ok(volume)
+        coEvery { ssdpScanner.discoverTVs() } returns listOf(tvFoundOnTheNetwork)
+
+        val viewModel = newViewModel()
+
+        val state = viewModel.uiState.value
+        assertEquals("192.0.2.17", state.config.host)
+        assertEquals("a chave de pareamento continua valendo", defaultConfig.pairingKey, state.config.pairingKey)
+        assertEquals(TVPowerState.ON, state.powerState)
+        coVerify { settingsRepo.updateHostAndPort("192.0.2.17", 8080) }
+    }
+
+    @Test
+    fun aTvInStandby_isLookedForAtMostEveryTwoMinutes() = runTest(testDispatcher) {
+        coEvery { tvClient.getVolumeInfo(any()) } returns noAnswer
+        val viewModel = newViewModel()
+        coVerify(exactly = 1) { ssdpScanner.discoverTVs() }
+
+        viewModel.startPollingStatus()
+        runCurrent()
+        advanceTimeBy(60_000)
+        coVerify(exactly = 1) { ssdpScanner.discoverTVs() }
+
+        advanceTimeBy(70_000)
+        coVerify(exactly = 2) { ssdpScanner.discoverTVs() }
+        viewModel.stopPollingStatus()
+        assertEquals(defaultConfig.host, viewModel.uiState.value.config.host)
+    }
+
+    @Test
+    fun withTheTvAnswering_nobodyLooksForIt() = runTest(testDispatcher) {
+        val viewModel = newViewModel()
+        viewModel.startPollingStatus()
+        runCurrent()
+        advanceTimeBy(300_000)
+        viewModel.stopPollingStatus()
+
+        coVerify(exactly = 0) { ssdpScanner.discoverTVs() }
     }
 }

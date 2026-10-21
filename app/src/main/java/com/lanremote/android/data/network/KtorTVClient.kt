@@ -4,6 +4,7 @@ import com.lanremote.android.data.model.ChannelInfo
 import com.lanremote.android.data.model.TVConfig
 import com.lanremote.android.data.model.VolumeInfo
 import io.ktor.client.HttpClient
+import io.ktor.client.call.body
 import io.ktor.client.engine.cio.CIO
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.request.get
@@ -144,6 +145,13 @@ class KtorTVClient(
         }
 
     /**
+     * O que a TV está mostrando, em JPEG (`screen_image`). Serve para ler na tela o código de
+     * pareamento da TV Box.
+     */
+    suspend fun getScreenImage(config: TVConfig): RoapResult<ByteArray> =
+        withResponse(config, request = { session -> query(config, "screen_image", session) }) { it.body<ByteArray>() }
+
+    /**
      * Modelo da TV pela descrição UDAP ("42LN5700-SA_11"), que responde sem pareamento. Nulo se a
      * TV não disser.
      */
@@ -173,6 +181,12 @@ class KtorTVClient(
         config: TVConfig,
         request: suspend (session: String) -> HttpResponse,
         parse: (body: String) -> T
+    ): RoapResult<T> = withResponse(config, request) { parse(it.bodyAsText()) }
+
+    private suspend fun <T> withResponse(
+        config: TVConfig,
+        request: suspend (session: String) -> HttpResponse,
+        read: suspend (response: HttpResponse) -> T
     ): RoapResult<T> = withContext(Dispatchers.IO) {
         try {
             var response = request(config.sessionId.orEmpty())
@@ -184,7 +198,7 @@ class KtorTVClient(
                 }
             }
             if (response.status == HttpStatusCode.OK) {
-                RoapResult.Ok(parse(response.bodyAsText()), newSession)
+                RoapResult.Ok(read(response), newSession)
             } else {
                 RoapResult.Refused(response.status.value, newSession)
             }

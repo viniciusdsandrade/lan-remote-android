@@ -82,7 +82,8 @@ class AndroidTvIdentity : IdentityStore {
             .setCertificateSubject(X500Principal("CN=LanRemote"))
             .setCertificateSerialNumber(BigInteger.valueOf(now))
             .setCertificateNotBefore(Date(now - DAY_MILLIS))
-            .setCertificateNotAfter(Date(now + 3650L * DAY_MILLIS))
+            // O pareamento dura o que durar o certificado: 20 anos.
+            .setCertificateNotAfter(Date(now + 7300L * DAY_MILLIS))
             .build()
         KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_RSA, PROVIDER).run {
             initialize(spec)

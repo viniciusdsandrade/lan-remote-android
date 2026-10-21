@@ -12,6 +12,7 @@ ktor = "3.0.3"
 datastore = "1.1.1"
 coroutines = "1.9.0"
 mockk = "1.13.13"
+mlkitTextRecognition = "16.0.1"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -46,6 +47,9 @@ kotlinx-coroutines-test = { group = "org.jetbrains.kotlinx", name = "kotlinx-cor
 
 # Mockk
 mockk = { group = "io.mockk", name = "mockk", version.ref = "mockk" }
+
+# ML Kit: OCR do código de pareamento na foto da tela da TV (modelo latino embutido, sem rede)
+mlkit-text-recognition = { group = "com.google.mlkit", name = "text-recognition", version.ref = "mlkitTextRecognition" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

@@ -323,7 +323,7 @@ private fun Candidates(boxes: List<AndroidTvBox>, actions: BoxSettingsActions) {
     var manualIp by remember { mutableStateOf("") }
 
     Step(1, "Ligue a TV (só desta vez) e coloque na entrada HDMI da TV Box.")
-    Step(2, "Toque em Parear: um código de 6 caracteres aparece na tela da TV.")
+    Step(2, "Toque em Parear: um código de 6 caracteres aparece na tela da TV, e o app o lê sozinho.")
 
     if (boxes.isEmpty()) {
         Footnote("Nenhuma TV Box encontrada. Ela precisa estar na tomada e no mesmo Wi-Fi do celular.")
@@ -381,7 +381,7 @@ private fun CodeEntry(confirming: Boolean, error: String?, actions: BoxSettingsA
     var code by remember { mutableStateOf("") }
     val canConfirm = code.length == 6 && !confirming
 
-    Step(3, "Digite o código que apareceu na tela da TV:")
+    Step(3, "Lendo o código na tela da TV… Se o app não conseguir, digite o código que apareceu nela:")
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
         AppTextField(
             value = code,

@@ -5,6 +5,8 @@ import androidx.lifecycle.viewModelScope
 import com.lanremote.android.data.androidtv.AndroidTvError
 import com.lanremote.android.data.androidtv.BoxPairing
 import com.lanremote.android.data.androidtv.MacAddress
+import com.lanremote.android.data.androidtv.MlKitScreenCodeReader
+import com.lanremote.android.data.androidtv.ScreenCodeReader
 import com.lanremote.android.data.androidtv.TvBoxLink
 import com.lanremote.android.data.model.AndroidTvBox
 import com.lanremote.android.data.model.TVKey
@@ -34,6 +36,8 @@ class RemoteViewModel(
     private val settingsRepo: SettingsRepository,
     private val ssdpScanner: SsdpScanner,
     private val tvBoxLink: TvBoxLink,
+    /** Lê o código de pareamento da TV Box na foto da tela da TV. */
+    private val codeReader: ScreenCodeReader = MlKitScreenCodeReader(),
     /** Relógio monotônico em milissegundos (os testes passam o do agendador virtual). */
     private val clock: () -> Long = { System.nanoTime() / 1_000_000 }
 ) : ViewModel() {
@@ -45,6 +49,10 @@ class RemoteViewModel(
         /** Espera antes da segunda tentativa quando uma consulta fica sem resposta. */
         private const val RETRY_DELAY_MILLIS = 1_500L
         private const val VOLUME_REFRESH_DELAY_MILLIS = 350L
+
+        /** Com o código na tela da TV: fotos da tela até lê-lo, ou até o usuário digitá-lo. */
+        private const val CODE_READ_ATTEMPTS = 5
+        private const val CODE_READ_INTERVAL_MILLIS = 1_500L
 
         /** Depois do POWER na TV Box: a imagem volta em segundos; a rede da TV, em ~40–55 s. */
         private const val TURN_ON_CHECK_MILLIS = 1_500L
@@ -665,7 +673,7 @@ class RemoteViewModel(
         }
     }
 
-    /** Faz a TV Box mostrar um código de 6 caracteres na tela da TV. */
+    /** Faz a TV Box mostrar um código de 6 caracteres na tela da TV, e tenta lê-lo de lá. */
     fun requestBoxCode(candidate: AndroidTvBox) {
         pairingJob?.cancel()
         activePairing?.cancel()
@@ -674,16 +682,36 @@ class RemoteViewModel(
         _uiState.update { it.copy(boxCodeError = null, boxPairingStage = BoxPairingStage.RequestingCode) }
         pairingJob = viewModelScope.launch {
             try {
-                activePairing = tvBoxLink.startPairing(candidate.host)
+                val pairing = tvBoxLink.startPairing(candidate.host)
+                activePairing = pairing
                 pairingCandidate = candidate
                 _uiState.update { it.copy(boxPairingStage = BoxPairingStage.WaitingForCode) }
                 haptic.performSuccess()
+                readBoxCode(pairing)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
                 _uiState.update { it.copy(boxPairingStage = BoxPairingStage.Failed(describe(e))) }
                 haptic.performError()
             }
+        }
+    }
+
+    /**
+     * O código está na TV, e o app consegue fotografá-la (`screen_image`): lê o código por OCR para
+     * ninguém precisar digitá-lo. O dígito verificador do código separa as confusões do OCR antes
+     * de enviar qualquer coisa; se nenhuma leitura passar, o campo para digitar continua na tela.
+     */
+    private suspend fun readBoxCode(pairing: BoxPairing) {
+        repeat(CODE_READ_ATTEMPTS) {
+            delay(CODE_READ_INTERVAL_MILLIS)
+            if (activePairing !== pairing || _uiState.value.boxPairingStage != BoxPairingStage.WaitingForCode) return
+            val image = tvClient.getScreenImage(_uiState.value.config)
+            keepSession(image.newSession)
+            val jpeg = (image as? RoapResult.Ok)?.value ?: return@repeat
+            val code = codeReader.read(jpeg).firstOrNull(pairing::accepts) ?: return@repeat
+            confirmBoxCode(code)
+            return
         }
     }
 

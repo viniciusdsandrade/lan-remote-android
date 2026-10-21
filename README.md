@@ -1,6 +1,6 @@
 # LAN Remote Android (LG NetCast TV)
 
-Aplicativo Android nativo para controlar pela rede local (LAN) a TV LG NetCast (ex.: 42LN5700), sem servidores intermediários, sem nuvem, com resposta instantânea e feedback háptico. Mesma funcionalidade dos apps de Mac e iOS do projeto.
+Aplicativo Android nativo para controlar pela rede local (LAN) a TV LG NetCast (série LN5700, 2013), sem servidores intermediários, sem nuvem, com resposta instantânea e feedback háptico. Mesma funcionalidade dos apps de Mac e iOS do projeto.
 
 ---
 
@@ -33,7 +33,7 @@ A TV não liga pela rede (em standby o controlador de rede dela desliga; Wake-on
 2. Nessa janela o app aperta **POWER** pelo protocolo do controle remoto do Android TV (o mesmo do app Google TV: portas 6466/6467, TLS com certificado próprio, mensagens protobuf). Se a tela da TV Box já estava ligada, o app a põe para dormir, espera 3 s e a acorda de novo: só um despertar novo manda o One Touch Play.
 3. Ao acordar, a TV Box manda **One Touch Play** pelo HDMI-CEC: a TV liga, já na entrada dela. A imagem volta em segundos; a rede da TV, em ~40–55 s, e aí o controle volta a responder (o app consulta a TV a cada 1,5 s por até 90 s).
 
-Uma vez só, em **Ajustes › Ligar a TV pelo app**: com a TV ligada na entrada da TV Box, toque em **Parear** e digite o código de 6 caracteres que aparece na tela (o primeiro par é um checksum: um erro de digitação é avisado sem incomodar a TV Box). O app gera uma chave RSA e um certificado no **AndroidKeyStore** (a chave nunca sai dele) e confere a conexão na porta 6466 sem apertar nada. Requisitos:
+Uma vez só, em **Ajustes › Ligar a TV pelo app**: com a TV ligada na entrada da TV Box, toque em **Parear**. A TV Box mostra um código de 6 caracteres na TV e o app o lê sozinho: fotografa a tela da TV (consulta `screen_image` do ROAP), lê o código por OCR (ML Kit, modelo latino embutido no app, sem rede) e confere o dígito verificador antes de enviar, o que separa as confusões do OCR (0/D, 8/B); se não conseguir, o campo para digitar fica na tela (o primeiro par do código é um checksum: um erro de digitação é avisado sem incomodar a TV Box). O app gera uma chave RSA e um certificado de 20 anos no **AndroidKeyStore** (a chave nunca sai dele) e confere a conexão na porta 6466 sem apertar nada. O pareamento dura enquanto essa chave existir: ela some ao desinstalar o app ou em **Esquecer**, e uma chave nova exige parear de novo. Requisitos:
 
 - **SIMPLINK ligado na TV** (botão SIMPLINK do app, ou Configurações › Opções › SIMPLINK). Sem ele a TV ignora o CEC.
 - **HDMI-CEC na TV Box** (Configurações › Tela e som ou Sistema › Entradas › HDMI-CEC): mantenha o **HDMI-CEC ativado** e desative **"Desligar automaticamente"**.
@@ -43,6 +43,8 @@ Uma vez só, em **Ajustes › Ligar a TV pelo app**: com a TV ligada na entrada 
 - **Celular no Wi-Fi de casa**: sem Wi-Fi o app avisa em vez de tentar.
 
 Não adianta usar `KEYCODE_TV_POWER` (177) nem `KEYCODE_WAKEUP` (224): a TV Box da sala ignora os dois.
+
+Só o app para Mac tem uma reserva quando a TV Box sai do Wi-Fi: o PS5. Acordado pela rede o PS5 não manda o One Touch Play, então o app do Mac o reinicia por uma sessão do Uso remoto, o que não existe no celular. Se o botão Ligar não achar a TV Box, confira o modo de energia dela (acima) e o Wi-Fi.
 
 Detalhe de implementação que vale registrar: no TLS 1.3 a assinatura do cliente é RSA-PSS, mas o Conscrypt aplica o enchimento PSS no BoringSSL e pede ao Keystore a operação RSA crua. Por isso a chave é gerada também com `ENCRYPTION_PADDING_NONE`; sem isso o keystore2 recusa com `INCOMPATIBLE_PADDING_MODE`.
 

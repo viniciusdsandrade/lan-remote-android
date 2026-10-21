@@ -66,6 +66,9 @@ dependencies {
     implementation(libs.kotlinx.coroutines.core)
     implementation(libs.kotlinx.coroutines.android)
 
+    // ML Kit: lê o código de pareamento da TV Box na foto da tela da TV
+    implementation(libs.mlkit.text.recognition)
+
     // Unit Testing
     testImplementation(libs.junit)
     testImplementation(libs.kotlinx.coroutines.test)

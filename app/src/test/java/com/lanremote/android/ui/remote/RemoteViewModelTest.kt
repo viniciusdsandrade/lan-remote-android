@@ -73,6 +73,7 @@ class RemoteViewModelTest {
         coEvery { tvClient.getCurrentChannel(any()) } returns RoapResult.Ok(ChannelInfo(inputSource = "HDMI2", channel = null))
         coEvery { tvClient.sendCommand(any(), any()) } returns RoapResult.Ok(Unit)
         coEvery { tvClient.fetchModelName(any(), any()) } returns "42LN5700-SA_11"
+        coEvery { tvClient.getScreenImage(any()) } returns noAnswer   // sem foto da TV, o código é digitado
         coEvery { ssdpScanner.discoverTVs() } returns emptyList()
     }
 

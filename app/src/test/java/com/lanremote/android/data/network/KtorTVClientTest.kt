@@ -261,4 +261,19 @@ class KtorTVClientTest {
         assertTrue(volume is RoapResult.Unreachable)
         assertTrue(client.requestPairingKey("192.0.2.100").isFailure)
     }
+
+    @Test
+    fun getScreenImage_returnsTheJpegBytes() = runBlocking {
+        val jpeg = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte(), 0xE0.toByte(), 0, 1, 2)
+        var target: String? = null
+        val client = KtorTVClient(HttpClient(MockEngine { request ->
+            target = request.url.parameters["target"]
+            respond(content = jpeg, status = HttpStatusCode.OK, headers = headersOf(HttpHeaders.ContentType, "image/jpeg"))
+        }))
+        val result = client.getScreenImage(config)
+
+        assertEquals("screen_image", target)
+        assertTrue(result is RoapResult.Ok)
+        assertTrue(jpeg.contentEquals((result as RoapResult.Ok).value))
+    }
 }

@@ -17,6 +17,9 @@ import java.security.interfaces.RSAPublicKey
 
 /** Um pareamento em andamento: o código já está na tela da TV. */
 interface BoxPairing {
+    /** Se [code] passa no próprio dígito verificador, sem mandar nada à TV Box. */
+    fun accepts(code: String): Boolean
+
     /** Envia o código; [AndroidTvError.WrongCode] mantém a TV Box esperando outra tentativa. */
     suspend fun finish(code: String)
 

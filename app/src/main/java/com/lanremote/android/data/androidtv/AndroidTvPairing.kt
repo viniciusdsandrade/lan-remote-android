@@ -23,18 +23,26 @@ class AndroidTvPairing(
         expect(AndroidTvMessages.PAIRING_CONFIGURATION_ACK)   // o código está na tela agora
     }
 
+    /** Se o código passa no próprio dígito verificador, sem mandar nada à TV Box. */
+    override fun accepts(code: String): Boolean = secretFor(code) != null
+
     /**
      * Confere e envia o código. Com erro de digitação lança [AndroidTvError.WrongCode] sem enviar
      * nada: a TV Box continua esperando e dá para tentar de novo.
      */
     override suspend fun finish(code: String) {
-        val parsed = PairingMath.parse(code) ?: throw AndroidTvError.WrongCode()
-        val secret = PairingMath.secret(client, server, parsed.nonce)
-        // O primeiro byte do código é um checksum do resto: pega o erro antes da TV Box.
-        if (secret[0] != parsed.checksum) throw AndroidTvError.WrongCode()
+        val secret = secretFor(code) ?: throw AndroidTvError.WrongCode()
         channel.send(AndroidTvMessages.pairingSecret(secret))
         expect(AndroidTvMessages.PAIRING_SECRET_ACK)
         cancel()
+    }
+
+    /** A prova derivada do código, ou nulo se ele não for um código ou não bater com o checksum. */
+    private fun secretFor(code: String): ByteArray? {
+        val parsed = PairingMath.parse(code) ?: return null
+        val secret = PairingMath.secret(client, server, parsed.nonce)
+        // O primeiro byte do código é um checksum do resto: pega o erro antes da TV Box.
+        return secret.takeIf { it[0] == parsed.checksum }
     }
 
     override fun cancel() {

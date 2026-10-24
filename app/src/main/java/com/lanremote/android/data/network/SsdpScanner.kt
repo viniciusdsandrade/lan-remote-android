@@ -61,20 +61,46 @@ class SsdpScanner(
         try {
             multicastLock?.acquire()
 
-            val query = """
-                M-SEARCH * HTTP/1.1
-                HOST: $SSDP_ADDRESS:$SSDP_PORT
-                MAN: "ssdp:discover"
-                MX: 2
-                ST: urn:schemas-upnp-org:device:MediaRenderer:1
-            """.trimIndent().replace("\n", "\r\n") + "\r\n\r\n"
+            val queries = listOf(
+                """
+                    M-SEARCH * HTTP/1.1
+                    HOST: $SSDP_ADDRESS:$SSDP_PORT
+                    MAN: "ssdp:discover"
+                    MX: 2
+                    ST: udap:rootservice
+                """.trimIndent().replace("\n", "\r\n") + "\r\n\r\n",
+                """
+                    M-SEARCH * HTTP/1.1
+                    HOST: $SSDP_ADDRESS:$SSDP_PORT
+                    MAN: "ssdp:discover"
+                    MX: 2
+                    ST: urn:schemas-upnp-org:device:MediaRenderer:1
+                """.trimIndent().replace("\n", "\r\n") + "\r\n\r\n"
+            )
 
             DatagramSocket().use { socket ->
                 socket.soTimeout = 2500
-                val data = query.toByteArray()
+                socket.broadcast = true
                 val group = InetAddress.getByName(SSDP_ADDRESS)
-                val packet = DatagramPacket(data, data.size, group, SSDP_PORT)
-                socket.send(packet)
+                for (query in queries) {
+                    val data = query.toByteArray()
+                    val packet = DatagramPacket(data, data.size, group, SSDP_PORT)
+                    socket.send(packet)
+                }
+
+                // Também tenta B-SEARCH broadcast na porta 1990 (especificação LG NetCast UDAP 2.0)
+                try {
+                    val bsearch = """
+                        B-SEARCH * HTTP/1.1
+                        HOST: 255.255.255.255:1990
+                        MAN: "ssdp:discover"
+                        MX: 2
+                        ST: udap:rootservice
+                    """.trimIndent().replace("\n", "\r\n") + "\r\n\r\n"
+                    val bData = bsearch.toByteArray()
+                    val bPacket = DatagramPacket(bData, bData.size, InetAddress.getByName("255.255.255.255"), 1990)
+                    socket.send(bPacket)
+                } catch (ignored: Exception) {}
 
                 val buffer = ByteArray(2048)
                 val startTime = System.currentTimeMillis()
@@ -87,7 +113,11 @@ class SsdpScanner(
 
                         if (response.contains("LG", ignoreCase = true) ||
                             response.contains("NetCast", ignoreCase = true) ||
-                            response.contains("roap", ignoreCase = true)
+                            response.contains("roap", ignoreCase = true) ||
+                            response.contains("UDAP", ignoreCase = true) ||
+                            response.contains("rootservice", ignoreCase = true) ||
+                            response.contains("LN5700", ignoreCase = true) ||
+                            response.contains("HTTP/1.1 200", ignoreCase = true)
                         ) {
                             found.add(senderIp)
                         }

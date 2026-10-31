@@ -430,13 +430,14 @@ class RemoteViewModel(
     }
 
     /**
-     * Procura TVs na rede local (SSDP e varredura da sub-rede).
+     * Procura TVs na rede local (SSDP e varredura da sub-rede). Pedida pelo usuário, pode usar a
+     * busca UDAP, que mostra o pop-up de descoberta na TV; a busca automática ([locateTv]) não usa.
      */
     fun scanForTVs() {
         haptic.performClick()
         viewModelScope.launch {
             _uiState.update { it.copy(isScanning = true, discoveredTVs = emptyList()) }
-            val tvs = ssdpScanner.discoverTVs()
+            val tvs = ssdpScanner.discoverTVs(askedByUser = true)
             _uiState.update {
                 it.copy(
                     isScanning = false,

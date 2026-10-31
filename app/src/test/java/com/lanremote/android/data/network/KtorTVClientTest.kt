@@ -251,6 +251,27 @@ class KtorTVClientTest {
     }
 
     @Test
+    fun answersRoap_isTheVolumeQueryWithoutSessionOrUdap() = runBlocking {
+        val requests = mutableListOf<String>()
+        val userAgents = mutableListOf<String?>()
+        val statuses = ArrayDeque(listOf(HttpStatusCode.Unauthorized, HttpStatusCode.OK, HttpStatusCode.NotFound))
+        val client = KtorTVClient(HttpClient(MockEngine { request ->
+            requests += request.url.encodedPathAndQuery
+            userAgents += request.headers[HttpHeaders.UserAgent]
+            reply(unauthorized, statuses.removeFirst())
+        }))
+
+        assertTrue("401 sem sessão: é uma NetCast", client.answersRoap("192.0.2.100"))
+        assertTrue(client.answersRoap("192.0.2.100"))
+        assertFalse("404: outro aparelho com a porta 8080 aberta", client.answersRoap("192.0.2.35"))
+        assertEquals(List(3) { "/roap/api/data?target=volume_info" }, requests)
+        assertTrue(userAgents.none { it.orEmpty().contains("UDAP") })
+
+        val silent = KtorTVClient(HttpClient(MockEngine { throw ConnectException("Connection refused") }))
+        assertFalse(silent.answersRoap("192.0.2.100"))
+    }
+
+    @Test
     fun noAnswer_isUnreachable() = runBlocking {
         val client = KtorTVClient(HttpClient(MockEngine { throw ConnectException("Connection refused") }))
 

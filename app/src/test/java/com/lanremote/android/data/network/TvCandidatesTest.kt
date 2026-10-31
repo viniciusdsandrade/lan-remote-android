@@ -21,6 +21,17 @@ class TvCandidatesTest {
     }
 
     @Test
+    fun theAutomaticSearchKeepsWhoAnswersRoapWithoutAskingForTheModel() = runBlocking {
+        // Sem a descrição UDAP: fica quem responde à API ROAP, e o modelo o app lê depois.
+        val found = TvCandidates.confirmAnswering(listOf("192.0.2.17", "192.0.2.35", "192.0.2.17"), 8080) { host, _ ->
+            host == "192.0.2.17"
+        }
+
+        assertEquals(listOf(DiscoveredTV(ip = "192.0.2.17", port = 8080, name = "TV LG")), found)
+        assertNull(found.single().model)
+    }
+
+    @Test
     fun theNameShowsTheModelWithoutTheRegionalSuffix() {
         assertEquals("42LN5700", TvCandidates.shortModel("42LN5700-SA_11"))
         assertEquals("42LN5700", TvCandidates.shortModel("42LN5700"))

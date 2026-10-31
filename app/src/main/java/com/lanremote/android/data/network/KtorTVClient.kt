@@ -174,6 +174,24 @@ class KtorTVClient(
     }
 
     /**
+     * Se em host:porta há uma LG NetCast: a consulta `volume_info` sem sessão volta 401 (ou 200).
+     * User-Agent do ROAP, sem nada de UDAP: é a confirmação da busca automática.
+     */
+    suspend fun answersRoap(host: String, port: Int = 8080): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val response = client.get("http://$host:$port/roap/api/data") {
+                parameter("target", "volume_info")
+                header(HttpHeaders.UserAgent, USER_AGENT)
+                header(HttpHeaders.Connection, "close")
+            }
+            response.status == HttpStatusCode.OK || response.status == HttpStatusCode.Unauthorized
+        } catch (e: Exception) {
+            ensureActive()
+            false
+        }
+    }
+
+    /**
      * Roda a requisição com a sessão salva; num 401 refaz o pareamento com a chave salva e repete
      * uma vez só. Qualquer falha sem resposta HTTP vira [RoapResult.Unreachable].
      */

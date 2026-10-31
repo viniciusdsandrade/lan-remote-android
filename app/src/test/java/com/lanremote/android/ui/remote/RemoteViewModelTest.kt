@@ -278,7 +278,7 @@ class RemoteViewModelTest {
     @Test
     fun scanForTVs_populatesDiscoveredList() = runTest(testDispatcher) {
         val mockTV = DiscoveredTV(ip = "192.0.2.50", port = 8080, name = "LG Living Room")
-        coEvery { ssdpScanner.discoverTVs() } returns listOf(mockTV)
+        coEvery { ssdpScanner.discoverTVs(askedByUser = true) } returns listOf(mockTV)
 
         val viewModel = newViewModel()
 
@@ -287,6 +287,7 @@ class RemoteViewModelTest {
 
         assertEquals(1, viewModel.uiState.value.discoveredTVs.size)
         assertEquals("192.0.2.50", viewModel.uiState.value.discoveredTVs.first().ip)
+        coVerify(exactly = 1) { ssdpScanner.discoverTVs(askedByUser = true) }
     }
 
     // Ligar a TV pela TV Box
@@ -784,6 +785,8 @@ class RemoteViewModelTest {
         assertEquals("a chave de pareamento continua valendo", defaultConfig.pairingKey, state.config.pairingKey)
         assertEquals(TVPowerState.ON, state.powerState)
         coVerify { settingsRepo.updateHostAndPort("192.0.2.17", 8080) }
+        // Sozinho, sem a busca UDAP: cada resposta a ela põe o pop-up "Pairing Key" na TV.
+        coVerify(exactly = 0) { ssdpScanner.discoverTVs(askedByUser = true) }
     }
 
     @Test

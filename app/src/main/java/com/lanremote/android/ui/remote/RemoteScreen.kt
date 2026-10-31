@@ -117,6 +117,8 @@ fun RemoteScreen(
         StatusHeader(
             title = tvDisplayName(uiState.config.modelName),
             powerState = uiState.powerState,
+            notAnswering = uiState.notAnswering,
+            ipConflict = uiState.ipConflict,
             volumeLevel = uiState.status.volumeLevel,
             isMuted = uiState.status.isMuted,
             inputSource = uiState.status.inputSource,

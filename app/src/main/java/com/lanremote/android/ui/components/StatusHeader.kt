@@ -61,8 +61,9 @@ fun tvDisplayName(modelName: String): String {
 private val HeaderButtonBackground = Color(0xFF333338)
 
 /**
- * Cabeçalho: LED, nome da TV e o estado dela (Ligada, Desligada, Ligando…, Verificando…), com
- * volume e entrada quando ligada; botões do Guia dos botões e dos Ajustes.
+ * Cabeçalho: LED, nome da TV e o estado dela (Ligada, Ligada · sem resposta, Ligada · conflito de
+ * IP, Desligada, Ligando…, Verificando…), com volume e entrada quando ligada e respondendo; botões
+ * do Guia dos botões e dos Ajustes.
  */
 @Composable
 fun StatusHeader(
@@ -74,13 +75,21 @@ fun StatusHeader(
     onOpenGuide: () -> Unit,
     onOpenSettings: () -> Unit,
     onExplain: (ControlHelp) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    notAnswering: Boolean = false,
+    ipConflict: Boolean = false
 ) {
     val haptic = LocalHapticFeedback.current
     val explain: (ControlHelp) -> Unit = {
         haptic.performHapticFeedback(HapticFeedbackType.LongPress)
         onExplain(it)
     }
+    val statusLabel = when {
+        powerState == TVPowerState.ON && ipConflict -> "Ligada · conflito de IP"
+        powerState == TVPowerState.ON && notAnswering -> "Ligada · sem resposta"
+        else -> powerState.label()
+    }
+    val statusColor = if (powerState == TVPowerState.ON && notAnswering) MutedOrange else powerState.color()
 
     Row(
         modifier = modifier
@@ -93,7 +102,7 @@ fun StatusHeader(
             modifier = Modifier
                 .size(10.dp)
                 .clip(CircleShape)
-                .background(powerState.color())
+                .background(statusColor)
         )
 
         Column(modifier = Modifier.weight(1f)) {
@@ -110,14 +119,27 @@ fun StatusHeader(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
+                val statusHelp = if (ipConflict) Help.ipConflictStatus else Help.notAnsweringStatus
+                val statusModifier = if (powerState == TVPowerState.ON && notAnswering) {
+                    Modifier.controlHelp(
+                        statusHelp,
+                        onClick = { explain(statusHelp) },
+                        onExplain = explain,
+                        state = statusLabel
+                    )
+                } else {
+                    Modifier.semantics { contentDescription = "TV $statusLabel" }
+                }
                 Text(
-                    text = powerState.label(),
+                    text = statusLabel,
                     fontSize = 12.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = powerState.color(),
-                    modifier = Modifier.semantics { contentDescription = "TV ${powerState.label()}" }
+                    color = statusColor,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = statusModifier
                 )
-                if (powerState == TVPowerState.ON) {
+                if (powerState == TVPowerState.ON && !notAnswering) {
                     Separator()
                     Text(
                         text = if (isMuted) "Mudo" else "Vol $volumeLevel",

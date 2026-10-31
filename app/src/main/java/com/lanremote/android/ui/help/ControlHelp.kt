@@ -33,6 +33,7 @@ import androidx.compose.material.icons.filled.Tag
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.filled.Tv
 import androidx.compose.material.icons.filled.ViewInAr
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material.icons.filled.WifiFind
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Info
@@ -181,6 +182,12 @@ object Help {
         "Volume que a TV informou agora (ou Mudo).", Icons.AutoMirrored.Filled.VolumeUp)
     val inputStatus = ControlHelp("input-status", "", "Entrada atual",
         "Fonte que a TV está mostrando: TV, HDMI, AV…", Icons.Filled.Tv)
+    val notAnsweringStatus = ControlHelp("deaf-status", "", "TV ligada, sem resposta",
+        "A TV respondeu ao ping, mas a porta 8080 não aceitou conexão agora. Os botões apertados aguardam até 15 s para sair na ordem.",
+        Icons.Filled.Warning)
+    val ipConflictStatus = ControlHelp("conflict-status", "", "Conflito de IP na rede",
+        "Outro aparelho na rede respondeu no mesmo IP da TV. Fixe um IP para a TV no roteador ou use Buscar TV na rede.",
+        Icons.Filled.Warning)
 }
 
 /** Uma seção do Guia dos botões, na ordem da tela. */

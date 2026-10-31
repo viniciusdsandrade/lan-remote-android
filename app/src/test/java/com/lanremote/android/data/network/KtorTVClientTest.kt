@@ -267,8 +267,25 @@ class KtorTVClientTest {
         assertEquals(List(3) { "/roap/api/data?target=volume_info" }, requests)
         assertTrue(userAgents.none { it.orEmpty().contains("UDAP") })
 
+        val htmlRouter = KtorTVClient(HttpClient(MockEngine {
+            respond(
+                content = "<html><body>Router Admin</body></html>",
+                status = HttpStatusCode.OK,
+                headers = headersOf(HttpHeaders.ContentType, "text/html")
+            )
+        }))
+        assertFalse("200 HTML sem envelope ROAP não é uma NetCast", htmlRouter.answersRoap("192.0.2.1"))
+
         val silent = KtorTVClient(HttpClient(MockEngine { throw ConnectException("Connection refused") }))
         assertFalse(silent.answersRoap("192.0.2.100"))
+    }
+
+    @Test
+    fun answersPing_reachesLoopbackAndRejectsBlankHost() = runBlocking {
+        val client = KtorTVClient(HttpClient(MockEngine { reply(okEnvelope) }))
+        assertFalse(client.answersPing(""))
+        assertTrue(client.answersPing("127.0.0.1"))
+        assertFalse(client.hasForeignService(""))
     }
 
     @Test

@@ -55,7 +55,8 @@ class ControlHelpTest {
             Help.volumeUp, Help.volumeDown, Help.volume, Help.mute, Help.liveTV, Help.channelUp, Help.channelDown,
             Help.channel, Help.apps, Help.aspect, Help.threeD, Help.simplink, Help.rewind, Help.play, Help.pause,
             Help.stop, Help.forward, Help.media, Help.red, Help.green, Help.yellow, Help.blue, Help.colors,
-            Help.discovery, Help.guideSheet, Help.settings, Help.volumeStatus, Help.inputStatus
+            Help.discovery, Help.guideSheet, Help.settings, Help.volumeStatus, Help.inputStatus,
+            Help.notAnsweringStatus, Help.ipConflictStatus
         )
         assertEquals(all.size, all.map { it.id }.toSet().size)
         assertTrue("as teclas coloridas têm a cor", listOf(Help.red, Help.green, Help.yellow, Help.blue).all { it.tint != null })

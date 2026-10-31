@@ -19,8 +19,14 @@ import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.Socket
 
 /**
  * Cliente HTTP Ktor para a TV LG NetCast (42LN5700) pelo protocolo ROAP, porta 8080.
@@ -47,6 +53,12 @@ class KtorTVClient(
 
         /** `<major>` de `cur_channel` quando não há canal sintonizado (HDMI, AV…). */
         private const val NO_CHANNEL = "65520"
+
+        /**
+         * Portas que uma LG NetCast nunca abre (o firewall dela descarta SYN ali), enquanto
+         * roteadores, APs, computadores e celulares costumam ouvir em pelo menos uma delas.
+         */
+        private val FOREIGN_SERVICE_PORTS = listOf(80, 443, 22, 53, 445, 62078)
 
         fun createDefaultHttpClient(): HttpClient {
             return HttpClient(CIO) {
@@ -174,8 +186,8 @@ class KtorTVClient(
     }
 
     /**
-     * Se em host:porta há uma LG NetCast: a consulta `volume_info` sem sessão volta 401 (ou 200).
-     * User-Agent do ROAP, sem nada de UDAP: é a confirmação da busca automática.
+     * Se em host:porta há uma LG NetCast: a consulta `volume_info` sem sessão volta 401 (ou 200 com
+     * envelope ROAP). User-Agent do ROAP, sem nada de UDAP: é a confirmação da busca automática.
      */
     suspend fun answersRoap(host: String, port: Int = 8080): Boolean = withContext(Dispatchers.IO) {
         try {
@@ -184,7 +196,59 @@ class KtorTVClient(
                 header(HttpHeaders.UserAgent, USER_AGENT)
                 header(HttpHeaders.Connection, "close")
             }
-            response.status == HttpStatusCode.OK || response.status == HttpStatusCode.Unauthorized
+            when (response.status) {
+                HttpStatusCode.Unauthorized -> true
+                HttpStatusCode.OK -> {
+                    val body = response.bodyAsText()
+                    body.isBlank() ||
+                        body.contains("ROAP", ignoreCase = true) ||
+                        body.contains("<envelope", ignoreCase = true) ||
+                        body.contains("<level>", ignoreCase = true)
+                }
+                else -> false
+            }
+        } catch (e: Exception) {
+            ensureActive()
+            false
+        }
+    }
+
+    /**
+     * Confere por ICMP (`SOCK_DGRAM` / `IPPROTO_ICMP` via `InetAddress.isReachable` no Android) se
+     * há um host acordado neste IP quando a porta 8080 não respondeu.
+     */
+    suspend fun answersPing(host: String, timeoutMillis: Int = 1_000): Boolean = withContext(Dispatchers.IO) {
+        if (host.isBlank()) return@withContext false
+        try {
+            InetAddress.getByName(host).isReachable(timeoutMillis)
+        } catch (e: Exception) {
+            ensureActive()
+            false
+        }
+    }
+
+    /**
+     * Sem acesso à tabela ARP no Android 10+, diferencia a TV LG (cujo firewall descarta SYN nas
+     * portas comuns) de outro aparelho que assumiu o mesmo IP (roteador, AP, computador, celular),
+     * sondando em paralelo portas que uma NetCast nunca abre.
+     */
+    suspend fun hasForeignService(host: String, timeoutMillis: Int = 450): Boolean = withContext(Dispatchers.IO) {
+        if (host.isBlank()) return@withContext false
+        try {
+            coroutineScope {
+                FOREIGN_SERVICE_PORTS.map { port ->
+                    async {
+                        try {
+                            Socket().use { socket ->
+                                socket.connect(InetSocketAddress(host, port), timeoutMillis)
+                                true
+                            }
+                        } catch (_: Exception) {
+                            false
+                        }
+                    }
+                }.awaitAll().any { it }
+            }
         } catch (e: Exception) {
             ensureActive()
             false

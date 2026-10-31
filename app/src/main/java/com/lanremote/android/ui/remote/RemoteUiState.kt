@@ -20,6 +20,10 @@ sealed interface BoxPairingStage {
 data class RemoteUiState(
     val config: TVConfig = TVConfig(),
     val powerState: TVPowerState = TVPowerState.UNKNOWN,
+    /** Ligada (responde ao ping), mas a porta 8080 não aceitou conexão agora: teclas aguardam na fila. */
+    val notAnswering: Boolean = false,
+    /** Outro aparelho na rede respondeu no mesmo IP da TV logo depois de ela estar ativa ali. */
+    val ipConflict: Boolean = false,
     val status: TVStatus = TVStatus(),
     /** Sobe a cada tecla apertada com a TV desligada: a tela aponta o caminho para ligá-la. */
     val attentionPulse: Int = 0,

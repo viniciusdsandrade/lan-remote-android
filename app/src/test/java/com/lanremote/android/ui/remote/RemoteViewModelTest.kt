@@ -74,6 +74,8 @@ class RemoteViewModelTest {
         coEvery { tvClient.sendCommand(any(), any()) } returns RoapResult.Ok(Unit)
         coEvery { tvClient.fetchModelName(any(), any()) } returns "42LN5700-SA_11"
         coEvery { tvClient.getScreenImage(any()) } returns noAnswer   // sem foto da TV, o código é digitado
+        coEvery { tvClient.answersPing(any(), any()) } returns false
+        coEvery { tvClient.hasForeignService(any(), any()) } returns false
         coEvery { ssdpScanner.discoverTVs() } returns emptyList()
     }
 
@@ -815,5 +817,185 @@ class RemoteViewModelTest {
         viewModel.stopPollingStatus()
 
         coVerify(exactly = 0) { ssdpScanner.discoverTVs() }
+    }
+
+    // Porta 8080 sem resposta com ping vivo, fila FIFO de 15 s e conflito de IP
+
+    @Test
+    fun aTvAnsweringPingWhilePort8080IsDeaf_staysOnAsNotAnsweringAndQueuesKeysInOrder() = runTest(testDispatcher) {
+        val viewModel = newViewModel()
+        val delivered = mutableListOf<Pair<String?, Int>>()
+        var deaf = true
+
+        coEvery { tvClient.answersPing(defaultConfig.host, any()) } returns true
+        coEvery { tvClient.hasForeignService(defaultConfig.host, any()) } returns false
+        coEvery { tvClient.getVolumeInfo(any()) } answers {
+            if (deaf) noAnswer else RoapResult.Ok(volume)
+        }
+        coEvery { tvClient.sendCommand(any(), any()) } answers {
+            val cfg = firstArg<TVConfig>()
+            val code = secondArg<Int>()
+            if (deaf) {
+                noAnswer
+            } else {
+                val renewed = if (cfg.sessionId == "sess_1") "sess_recovered" else null
+                delivered += (renewed ?: cfg.sessionId) to code
+                RoapResult.Ok(Unit, newSession = renewed)
+            }
+        }
+
+        viewModel.refreshStatus()
+        advanceUntilIdle()
+        assertEquals(TVPowerState.ON, viewModel.uiState.value.powerState)
+        assertTrue(viewModel.uiState.value.notAnswering)
+        assertFalse(viewModel.uiState.value.ipConflict)
+
+        // Duas teclas apertadas com a 8080 muda: aguardam na fila em ordem FIFO.
+        viewModel.sendKey(TVKey.HOME)
+        viewModel.sendKey(TVKey.OK)
+        advanceTimeBy(2_500)
+        assertTrue("ainda sem resposta na 8080", delivered.isEmpty())
+
+        // A 8080 volta exigindo renovação de sessão: as duas teclas saem na ordem.
+        deaf = false
+        advanceUntilIdle()
+
+        assertEquals(
+            listOf("sess_recovered" to TVKey.HOME.code, "sess_recovered" to TVKey.OK.code),
+            delivered
+        )
+        assertEquals("sess_recovered", viewModel.uiState.value.config.sessionId)
+        coVerify { settingsRepo.updateSession("sess_recovered") }
+        assertEquals(TVPowerState.ON, viewModel.uiState.value.powerState)
+        assertFalse(viewModel.uiState.value.notAnswering)
+        assertFalse(viewModel.uiState.value.ipConflict)
+    }
+
+    @Test
+    fun aQueuedKeyWaitingLongerThanPatience_isDroppedInsteadOfFiringLate() = runTest(testDispatcher) {
+        val viewModel = newViewModel()
+        var deaf = true
+        var deliveredAfterRecovery = 0
+
+        coEvery { tvClient.answersPing(defaultConfig.host, any()) } returns true
+        coEvery { tvClient.getVolumeInfo(any()) } answers {
+            if (deaf) noAnswer else RoapResult.Ok(volume)
+        }
+        coEvery { tvClient.sendCommand(any(), any()) } answers {
+            if (deaf) {
+                noAnswer
+            } else {
+                deliveredAfterRecovery++
+                RoapResult.Ok(Unit)
+            }
+        }
+
+        viewModel.sendKey(TVKey.HOME)
+        advanceTimeBy(20_000)   // passou dos 15 s de KEY_PATIENCE_MILLIS
+
+        deaf = false
+        viewModel.refreshStatus()
+        advanceUntilIdle()
+
+        assertEquals("tecla vencida não dispara atrasada", 0, deliveredAfterRecovery)
+        assertEquals(TVPowerState.ON, viewModel.uiState.value.powerState)
+        assertFalse(viewModel.uiState.value.notAnswering)
+    }
+
+    @Test
+    fun pingDuringTurnOn_keepsTurningOnUntilHttpAnswers() = runTest(testDispatcher) {
+        val viewModel = tvOffWithPairedBox()
+        coEvery { tvBoxLink.switchTvOn(pairedBox) } returns pairedBox.host
+        coEvery { tvClient.answersPing(defaultConfig.host, any()) } returns true
+        coEvery { tvClient.getVolumeInfo(any()) } returnsMany listOf(noAnswer, noAnswer, RoapResult.Ok(volume))
+
+        viewModel.turnOn()
+        runCurrent()
+        advanceTimeBy(2_000)
+        assertEquals("ping antes do HTTP não encerra o Ligando…", TVPowerState.TURNING_ON, viewModel.uiState.value.powerState)
+        assertFalse(viewModel.uiState.value.notAnswering)
+
+        advanceUntilIdle()
+        assertEquals(TVPowerState.ON, viewModel.uiState.value.powerState)
+        assertFalse(viewModel.uiState.value.notAnswering)
+    }
+
+    @Test
+    fun pingRightAfterPowerOff_staysOffDuringThirtySecondGrace() = runTest(testDispatcher) {
+        val viewModel = newViewModel()
+        coEvery { tvClient.answersPing(defaultConfig.host, any()) } returns true
+
+        viewModel.confirmPowerOff()
+        advanceUntilIdle()
+        assertEquals(TVPowerState.OFF, viewModel.uiState.value.powerState)
+        assertFalse(viewModel.uiState.value.notAnswering)
+
+        // O kernel da TV ainda responde ping por ~15–25 s depois do POWER enquanto a 8080 já fechou.
+        coEvery { tvClient.getVolumeInfo(any()) } returns noAnswer
+        advanceTimeBy(15_000)
+        viewModel.refreshStatus()
+        advanceUntilIdle()
+        assertEquals(TVPowerState.OFF, viewModel.uiState.value.powerState)
+        assertFalse(viewModel.uiState.value.notAnswering)
+
+        // Passados 30 s, se voltar a responder ping (ex.: ligada pelo controle IR), acusa sem resposta.
+        advanceTimeBy(20_000)
+        viewModel.refreshStatus()
+        advanceUntilIdle()
+        assertEquals(TVPowerState.ON, viewModel.uiState.value.powerState)
+        assertTrue(viewModel.uiState.value.notAnswering)
+        assertFalse(viewModel.uiState.value.ipConflict)
+    }
+
+    @Test
+    fun foreignDeviceOnActiveTvIp_marksIpConflict() = runTest(testDispatcher) {
+        val viewModel = newViewModel()
+        coEvery { tvClient.getVolumeInfo(any()) } returns noAnswer
+        coEvery { tvClient.answersPing(defaultConfig.host, any()) } returns true
+        coEvery { tvClient.hasForeignService(defaultConfig.host, any()) } returns true
+
+        viewModel.refreshStatus()
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertEquals(TVPowerState.ON, state.powerState)
+        assertTrue(state.notAnswering)
+        assertTrue(state.ipConflict)
+    }
+
+    @Test
+    fun foreignDeviceOnColdOrStandbyIp_showsTvOffInsteadOfConflict() = runTest(testDispatcher) {
+        // A TV ficou desligada e o DHCP deu o IP antigo dela a outro aparelho da rede.
+        coEvery { tvClient.getVolumeInfo(any()) } returns noAnswer
+        coEvery { tvClient.answersPing(defaultConfig.host, any()) } returns true
+        coEvery { tvClient.hasForeignService(defaultConfig.host, any()) } returns true
+
+        val viewModel = newViewModel()
+
+        val state = viewModel.uiState.value
+        assertEquals(TVPowerState.OFF, state.powerState)
+        assertFalse(state.notAnswering)
+        assertFalse(state.ipConflict)
+    }
+
+    @Test
+    fun dhcpRelocationWinsBeforeIpConflictWhenTvMoved() = runTest(testDispatcher) {
+        val viewModel = newViewModel()
+        // Outro aparelho assumiu o IP antigo enquanto a TV ganhou 192.0.2.17 no DHCP.
+        coEvery { tvClient.getVolumeInfo(match { it.host == defaultConfig.host }) } returns noAnswer
+        coEvery { tvClient.answersPing(defaultConfig.host, any()) } returns true
+        coEvery { tvClient.hasForeignService(defaultConfig.host, any()) } returns true
+        coEvery { ssdpScanner.discoverTVs() } returns listOf(tvFoundOnTheNetwork)
+        coEvery { tvClient.getVolumeInfo(match { it.host == "192.0.2.17" }) } returns RoapResult.Ok(volume)
+
+        viewModel.refreshStatus()
+        advanceUntilIdle()
+
+        val state = viewModel.uiState.value
+        assertEquals("192.0.2.17", state.config.host)
+        assertEquals(TVPowerState.ON, state.powerState)
+        assertFalse(state.notAnswering)
+        assertFalse(state.ipConflict)
+        coVerify { settingsRepo.updateHostAndPort("192.0.2.17", 8080) }
     }
 }

@@ -27,8 +27,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.sync.Mutex
-import kotlinx.coroutines.sync.withLock
 
 class RemoteViewModel(
     private val tvClient: KtorTVClient,
@@ -39,7 +37,9 @@ class RemoteViewModel(
     /** Lê o código de pareamento da TV Box na foto da tela da TV. */
     private val codeReader: ScreenCodeReader = MlKitScreenCodeReader(),
     /** Relógio monotônico em milissegundos (os testes passam o do agendador virtual). */
-    private val clock: () -> Long = { System.nanoTime() / 1_000_000 }
+    private val clock: () -> Long = { System.nanoTime() / 1_000_000 },
+    /** Quanto tempo uma tecla apertada aguarda a porta 8080 voltar quando a TV responde ao ping. */
+    private val keyPatienceMillis: Long = KEY_PATIENCE_MILLIS
 ) : ViewModel() {
 
     companion object {
@@ -50,6 +50,10 @@ class RemoteViewModel(
         private const val RETRY_DELAY_MILLIS = 1_500L
         private const val VOLUME_REFRESH_DELAY_MILLIS = 350L
 
+        /** Fila de teclas enquanto a TV está ligada (responde ao ping), mas a porta 8080 engasgou. */
+        const val KEY_PATIENCE_MILLIS = 15_000L
+        private const val KEY_RETRY_MILLIS = 1_000L
+
         /** Com o código na tela da TV: fotos da tela até lê-lo, ou até o usuário digitá-lo. */
         private const val CODE_READ_ATTEMPTS = 5
         private const val CODE_READ_INTERVAL_MILLIS = 1_500L
@@ -58,16 +62,21 @@ class RemoteViewModel(
         private const val TURN_ON_CHECK_MILLIS = 1_500L
         private const val TURN_ON_TIMEOUT_MILLIS = 90_000L
 
-        /** Logo depois do POWER a TV ainda pode responder enquanto desliga: não volta a "Ligada". */
+        /** Logo depois do POWER a TV ainda pode responder HTTP enquanto desliga: não volta a "Ligada". */
         private const val POWER_OFF_GRACE_MILLIS = 8_000L
+        /** Depois do POWER o kernel Linux da TV ainda responde ping por ~15–25 s antes de cortar a placa. */
+        private const val PING_AFTER_POWER_OFF_GRACE_MILLIS = 30_000L
+        /** Janela recente de atividade da TV para distinguir conflito ativo de IP reatribuído em standby. */
+        private const val IP_CONFLICT_WINDOW_MILLIS = 120_000L
 
         /**
          * Procurar a TV na rede: sem endereço salvo, a cada 30 s; enquanto ela liga, a cada 10 s (a
-         * rede dela volta em ~40–55 s); sumida do endereço salvo, a cada 2 min (o roteador pode ter
-         * dado outro IP a ela; em standby a busca só não acha nada).
+         * rede dela volta em ~40–55 s); ligada mas sem resposta na 8080, a cada 30 s; sumida do
+         * endereço salvo, a cada 2 min (em standby a busca só não acha nada).
          */
         private const val TV_SEARCH_UNCONFIGURED_MILLIS = 30_000L
         private const val TV_SEARCH_TURNING_ON_MILLIS = 10_000L
+        private const val TV_SEARCH_NOT_ANSWERING_MILLIS = 30_000L
         private const val TV_SEARCH_MILLIS = 2 * 60_000L
 
         /** Com a TV ligada a TV Box está acordada e aparece no NSD: renova o endereço dela. */
@@ -84,14 +93,18 @@ class RemoteViewModel(
         )
     }
 
+    private enum class PingStatus { UNREACHABLE, ALIVE_SAME_TV, IP_CONFLICT }
+    private data class PendingKey(val key: TVKey, val pressedAt: Long)
+
     private val _uiState = MutableStateFlow(RemoteUiState())
     val uiState: StateFlow<RemoteUiState> = _uiState.asStateFlow()
 
-    private val sendMutex = Mutex()
+    private val pendingKeys = ArrayDeque<PendingKey>()
+    private var sendingKeys = false
     private var lastSendTime = 0L
-    private var queuedKeys = 0
     private var pollJob: Job? = null
     private var configLoaded = false
+    private var currentAddress: Pair<String, Int>? = null
     private var refreshing = false
     private var refreshAgain = false
     private var activePairing: BoxPairing? = null
@@ -99,6 +112,7 @@ class RemoteViewModel(
     /** Sobe a cada POWER aceito: respostas de consultas que começaram antes dele não valem mais. */
     private var powerEpoch = 0
     private var poweredOffAt: Long? = null
+    private var lastAnsweredAt: Long? = null
     private var pairingCandidate: AndroidTvBox? = null
     private var lastBoxRefresh: Long? = null
     private var lastTvSearch: Long? = null
@@ -114,12 +128,12 @@ class RemoteViewModel(
         // Observa as configurações salvas (DataStore). Só a troca de endereço pede uma consulta
         // nova: uma sessão renovada também chega por aqui.
         viewModelScope.launch {
-            var address: Pair<String, Int>? = null
             settingsRepo.tvConfigFlow.collect { config ->
                 _uiState.update { it.copy(config = config) }
                 configLoaded = true
-                if (address != config.host to config.port) {
-                    address = config.host to config.port
+                if (currentAddress != config.host to config.port) {
+                    currentAddress = config.host to config.port
+                    lastAnsweredAt = null
                     modelChecked = false
                     checkTv()
                 }
@@ -162,12 +176,15 @@ class RemoteViewModel(
             else -> haptic.performClick()
         }
 
-        queuedKeys++
-        viewModelScope.launch {
-            try {
-                sendMutex.withLock { transmit(key) }
-            } finally {
-                queuedKeys--
+        pendingKeys.addLast(PendingKey(key, clock()))
+        if (!sendingKeys) {
+            sendingKeys = true
+            viewModelScope.launch {
+                try {
+                    drainPendingKeys()
+                } finally {
+                    sendingKeys = false
+                }
             }
         }
     }
@@ -177,42 +194,106 @@ class RemoteViewModel(
      * mudando depois que o dedo sai do botão.
      */
     fun sendRepeatedKey(key: TVKey) {
-        if (queuedKeys == 0) {
+        if (!sendingKeys && pendingKeys.isEmpty()) {
             sendKey(key)
         }
     }
 
-    private suspend fun transmit(key: TVKey) {
-        if (!_uiState.value.canSendKeys) return   // a TV caiu enquanto a tecla esperava na fila
-
-        val wait = MIN_GAP_MILLIS - (clock() - lastSendTime)
-        if (wait > 0) {
-            delay(wait)
+    private suspend fun drainPendingKeys() {
+        while (pendingKeys.isNotEmpty()) {
+            val item = pendingKeys.removeFirst()
+            if (!_uiState.value.canSendKeys) {
+                pendingKeys.clear()
+                return
+            }
+            if (clock() - item.pressedAt >= keyPatienceMillis) {
+                continue
+            }
+            transmit(item)
         }
-        lastSendTime = clock()
+    }
 
-        val result = tvClient.sendCommand(_uiState.value.config, key.code)
-        keepSession(result.newSession)
-        when (result) {
-            is RoapResult.Ok -> {
-                if (key == TVKey.POWER) {
-                    // POWER só desliga: a rede da TV cai logo em seguida.
-                    powerEpoch++
-                    poweredOffAt = clock()
-                    _uiState.update { it.copy(powerState = TVPowerState.OFF) }
-                } else {
-                    markAnswered()
-                    if (key in VOLUME_KEYS) {
-                        viewModelScope.launch {
-                            delay(VOLUME_REFRESH_DELAY_MILLIS)
-                            checkTv()
+    private suspend fun transmit(item: PendingKey) {
+        var relocatedOnce = false
+        while (_uiState.value.canSendKeys) {
+            val wait = MIN_GAP_MILLIS - (clock() - lastSendTime)
+            if (wait > 0) {
+                delay(wait)
+            }
+            if (!_uiState.value.canSendKeys) {
+                pendingKeys.clear()
+                return
+            }
+            lastSendTime = clock()
+
+            val result = tvClient.sendCommand(_uiState.value.config, item.key.code)
+            keepSession(result.newSession)
+            when (result) {
+                is RoapResult.Ok -> {
+                    if (item.key == TVKey.POWER) {
+                        // POWER só desliga: a rede da TV cai logo em seguida.
+                        powerEpoch++
+                        poweredOffAt = clock()
+                        lastAnsweredAt = null
+                        pendingKeys.clear()
+                        _uiState.update {
+                            it.copy(powerState = TVPowerState.OFF, notAnswering = false, ipConflict = false)
                         }
+                    } else {
+                        markAnswered()
+                        if (item.key in VOLUME_KEYS) {
+                            viewModelScope.launch {
+                                delay(VOLUME_REFRESH_DELAY_MILLIS)
+                                checkTv()
+                            }
+                        }
+                    }
+                    return
+                }
+                is RoapResult.Refused -> {
+                    if (result.httpStatus == 401 || result.httpStatus == 503) {
+                        markAnswered()
+                        return
+                    }
+                    if (!relocatedOnce && relocateTvIfDue()) {
+                        relocatedOnce = true
+                        continue
+                    }
+                    val recent = lastAnsweredAt?.let { clock() - it < IP_CONFLICT_WINDOW_MILLIS } == true
+                    if (!recent) {
+                        pendingKeys.clear()
+                        markUnreachable()
+                        viewModelScope.launch { checkTv() }
+                        return
+                    }
+                    markNotAnswering(conflict = true)
+                }
+                is RoapResult.Unreachable -> {
+                    if (!relocatedOnce && relocateTvIfDue()) {
+                        relocatedOnce = true
+                        continue
+                    }
+                    when (checkTvPing(_uiState.value.config.host)) {
+                        PingStatus.UNREACHABLE -> {
+                            pendingKeys.clear()
+                            // Sem resposta nem ao ping: a consulta, com a regra das duas falhas,
+                            // confirma se a TV entrou em standby.
+                            viewModelScope.launch { checkTv() }
+                            return
+                        }
+                        PingStatus.ALIVE_SAME_TV -> markNotAnswering(conflict = false)
+                        PingStatus.IP_CONFLICT -> markNotAnswering(conflict = true)
                     }
                 }
             }
-            is RoapResult.Refused -> markAnswered()
-            // Sem resposta: a consulta, com a regra das duas falhas, decide se a TV desligou.
-            is RoapResult.Unreachable -> viewModelScope.launch { checkTv() }
+
+            if (clock() - item.pressedAt >= keyPatienceMillis) {
+                return
+            }
+            delay(KEY_RETRY_MILLIS)
+            if (clock() - item.pressedAt >= keyPatienceMillis) {
+                return
+            }
         }
     }
 
@@ -266,8 +347,12 @@ class RemoteViewModel(
     private suspend fun queryTv() {
         val epoch = powerEpoch
         var volume = tvClient.getVolumeInfo(_uiState.value.config)
-        val powerState = _uiState.value.powerState
-        if (volume is RoapResult.Unreachable && (powerState == TVPowerState.ON || powerState == TVPowerState.UNKNOWN)) {
+        val initial = _uiState.value
+        if (
+            volume is RoapResult.Unreachable &&
+            !initial.notAnswering &&
+            (initial.powerState == TVPowerState.ON || initial.powerState == TVPowerState.UNKNOWN)
+        ) {
             // Uma falha só não quer dizer standby: a primeira requisição depois de abrir o app às
             // vezes falha com a TV ligada. Pergunta mais uma vez antes de mostrá-la desligada.
             delay(RETRY_DELAY_MILLIS)
@@ -278,12 +363,39 @@ class RemoteViewModel(
         if (epoch != powerEpoch) return
         when (volume) {
             is RoapResult.Unreachable -> {
-                markUnreachable()
+                if (_uiState.value.powerState == TVPowerState.TURNING_ON) {
+                    markUnreachable()
+                    refreshBoxAddressIfNeeded()
+                    locateTv()
+                    return
+                }
+                if (relocateTvIfDue()) return
+                if (epoch != powerEpoch) return
+                when (checkTvPing(_uiState.value.config.host)) {
+                    PingStatus.ALIVE_SAME_TV -> markNotAnswering(conflict = false)
+                    PingStatus.IP_CONFLICT -> markNotAnswering(conflict = true)
+                    PingStatus.UNREACHABLE -> markUnreachable()
+                }
                 refreshBoxAddressIfNeeded()
-                locateTv()
                 return   // não adianta perguntar a entrada também
             }
-            is RoapResult.Refused -> markAnswered()
+            is RoapResult.Refused -> {
+                if (volume.httpStatus == 401 || volume.httpStatus == 503) {
+                    markAnswered()
+                } else {
+                    if (_uiState.value.powerState == TVPowerState.TURNING_ON) {
+                        refreshBoxAddressIfNeeded()
+                        locateTv()
+                        return
+                    }
+                    if (relocateTvIfDue()) return
+                    if (epoch != powerEpoch) return
+                    val recent = lastAnsweredAt?.let { clock() - it < IP_CONFLICT_WINDOW_MILLIS } == true
+                    if (recent) markNotAnswering(conflict = true) else markUnreachable()
+                    refreshBoxAddressIfNeeded()
+                    return
+                }
+            }
             is RoapResult.Ok -> {
                 markAnswered()
                 val info = volume.value
@@ -317,6 +429,22 @@ class RemoteViewModel(
         refreshBoxAddressIfNeeded()
     }
 
+    /**
+     * Quando a porta 8080 falha e a TV não mudou de IP, confere por ICMP se a TV continua acordada
+     * ali (`ALIVE_SAME_TV`), se outro aparelho pegou o IP de uma TV recém-ativa (`IP_CONFLICT`) ou
+     * se ela está desligada (`UNREACHABLE`).
+     */
+    private suspend fun checkTvPing(host: String): PingStatus {
+        if (host.isBlank()) return PingStatus.UNREACHABLE
+        if (poweredOffAt?.let { clock() - it < PING_AFTER_POWER_OFF_GRACE_MILLIS } == true) {
+            return PingStatus.UNREACHABLE
+        }
+        if (!tvClient.answersPing(host)) return PingStatus.UNREACHABLE
+        if (!tvClient.hasForeignService(host)) return PingStatus.ALIVE_SAME_TV
+        val recentSession = lastAnsweredAt?.let { clock() - it < IP_CONFLICT_WINDOW_MILLIS } == true
+        return if (recentSession) PingStatus.IP_CONFLICT else PingStatus.UNREACHABLE
+    }
+
     /** O modelo da TV, para o cabeçalho ("TV LG 42LN5700"): uma vez por sessão (e por endereço). */
     private fun readModelOnce() {
         if (modelChecked) return
@@ -336,20 +464,49 @@ class RemoteViewModel(
     }
 
     /**
-     * Qualquer resposta HTTP (200 ou 401) prova que a rede da TV está de pé, menos nos primeiros
+     * Qualquer resposta ROAP (200, 401 ou 503) prova que a rede da TV está de pé, menos nos primeiros
      * segundos depois de um POWER aceito, quando ela ainda pode responder enquanto desliga.
      */
     private fun markAnswered() {
-        val shuttingDown = poweredOffAt?.let { clock() - it < POWER_OFF_GRACE_MILLIS } == true
+        val now = clock()
+        val shuttingDown = poweredOffAt?.let { now - it < POWER_OFF_GRACE_MILLIS } == true
+        if (shuttingDown && _uiState.value.powerState == TVPowerState.OFF) return
+        lastAnsweredAt = now
+        lastTvSearch = null
         _uiState.update {
-            if (it.powerState == TVPowerState.OFF && shuttingDown) it else it.copy(powerState = TVPowerState.ON, powerOnError = null)
+            it.copy(
+                powerState = TVPowerState.ON,
+                notAnswering = false,
+                ipConflict = false,
+                powerOnError = null
+            )
+        }
+    }
+
+    /** A TV responde ao ping (ou há conflito ativo no IP dela), mas o servidor ROAP na 8080 não respondeu. */
+    private fun markNotAnswering(conflict: Boolean) {
+        _uiState.update {
+            if (it.powerState == TVPowerState.TURNING_ON) {
+                it
+            } else {
+                it.copy(
+                    powerState = TVPowerState.ON,
+                    notAnswering = true,
+                    ipConflict = conflict,
+                    powerOnError = null
+                )
+            }
         }
     }
 
     /** Sem resposta: nesta TV é standby, a não ser que ela esteja sendo ligada agora. */
     private fun markUnreachable() {
         _uiState.update {
-            if (it.powerState == TVPowerState.TURNING_ON) it else it.copy(powerState = TVPowerState.OFF)
+            if (it.powerState == TVPowerState.TURNING_ON) {
+                it
+            } else {
+                it.copy(powerState = TVPowerState.OFF, notAnswering = false, ipConflict = false)
+            }
         }
     }
 
@@ -390,18 +547,24 @@ class RemoteViewModel(
             val result = tvClient.authenticate(host, port, key)
             val session = result.getOrNull()
             if (session != null) {
+                val cleanHost = host.trim()
                 val updated = _uiState.value.config.copy(
-                    host = host,
+                    host = cleanHost,
                     port = port,
                     pairingKey = key,
                     sessionId = session
                 )
+                currentAddress = cleanHost to port
+                lastAnsweredAt = clock()
+                lastTvSearch = null
                 settingsRepo.saveConfig(updated)
                 _uiState.update {
                     it.copy(
                         pairingMessage = "Pareado com sucesso!",
                         config = updated,
-                        powerState = TVPowerState.ON
+                        powerState = TVPowerState.ON,
+                        notAnswering = false,
+                        ipConflict = false
                     )
                 }
                 haptic.performSuccess()
@@ -418,13 +581,24 @@ class RemoteViewModel(
      */
     fun saveSettings(host: String, port: Int, pairingKey: String) {
         viewModelScope.launch {
+            val cleanHost = host.trim()
+            val addressChanged = currentAddress != cleanHost to port
             val updated = _uiState.value.config.copy(
-                host = host.trim(),
+                host = cleanHost,
                 port = port,
                 pairingKey = pairingKey.trim()
             )
+            currentAddress = cleanHost to port
+            if (addressChanged) {
+                lastAnsweredAt = null
+                lastTvSearch = null
+                modelChecked = false
+            }
             settingsRepo.saveConfig(updated)
-            _uiState.update { it.copy(config = updated) }
+            _uiState.update {
+                if (addressChanged) it.copy(config = updated, notAnswering = false, ipConflict = false)
+                else it.copy(config = updated)
+            }
             checkTv()
         }
     }
@@ -452,29 +626,66 @@ class RemoteViewModel(
         haptic.performClick()
         viewModelScope.launch {
             val config = _uiState.value.config
+            val addressChanged = currentAddress != tv.ip to tv.port
             val updated = config.copy(host = tv.ip, port = tv.port, modelName = tv.model ?: config.modelName)
+            currentAddress = tv.ip to tv.port
+            if (addressChanged) {
+                lastAnsweredAt = null
+                lastTvSearch = null
+                modelChecked = false
+            }
             settingsRepo.saveConfig(updated)
-            _uiState.update { it.copy(config = updated) }
+            _uiState.update { it.copy(config = updated, notAnswering = false, ipConflict = false) }
             checkTv()
         }
     }
 
+    private fun tvSearchIntervalMillis(state: RemoteUiState): Long = when {
+        state.powerState == TVPowerState.TURNING_ON -> TV_SEARCH_TURNING_ON_MILLIS
+        !state.config.isConfigured -> TV_SEARCH_UNCONFIGURED_MILLIS
+        state.notAnswering -> TV_SEARCH_NOT_ANSWERING_MILLIS
+        else -> TV_SEARCH_MILLIS
+    }
+
     /**
-     * Acha a TV na rede sozinho: no primeiro uso (nenhum endereço salvo) e quando ela para de
-     * responder no endereço salvo, porque o roteador pode ter dado outro IP a ela. Só aceita uma TV
-     * LG que se apresentou pela descrição UDAP; com várias na rede, a escolha é de [TvCandidates.choose].
+     * Tenta reencontrar a TV já configurada em outro IP da rede antes de classificá-la como sem
+     * resposta, conflito de IP ou desligada. Devolve `true` se o endereço da TV mudou.
+     */
+    private suspend fun relocateTvIfDue(): Boolean {
+        val state = _uiState.value
+        if (searchingTv || !state.config.isConfigured) return false
+        val now = clock()
+        val last = lastTvSearch
+        if (last != null && now - last < tvSearchIntervalMillis(state)) return false
+        if (!tvBoxLink.isOnWifi()) return false
+        lastTvSearch = now
+        searchingTv = true
+        return try {
+            val found = ssdpScanner.discoverTVs()
+            val current = _uiState.value.config
+            val tv = TvCandidates.choose(found, current.host, current.modelName)
+            if (tv != null && (tv.ip != current.host || tv.port != current.port)) {
+                useTv(tv)
+                true
+            } else {
+                false
+            }
+        } finally {
+            searchingTv = false
+        }
+    }
+
+    /**
+     * Acha a TV na rede sozinho: no primeiro uso (nenhum endereço salvo) e enquanto a TV está
+     * ligando. Só aceita uma TV LG que respondeu ao ROAP; com várias na rede, a escolha é de
+     * [TvCandidates.choose].
      */
     private fun locateTv() {
         if (searchingTv) return
         val state = _uiState.value
-        val interval = when {
-            state.powerState == TVPowerState.TURNING_ON -> TV_SEARCH_TURNING_ON_MILLIS
-            !state.config.isConfigured -> TV_SEARCH_UNCONFIGURED_MILLIS
-            else -> TV_SEARCH_MILLIS
-        }
         val now = clock()
         val last = lastTvSearch
-        if (last != null && now - last < interval) return
+        if (last != null && now - last < tvSearchIntervalMillis(state)) return
         if (!tvBoxLink.isOnWifi()) {
             if (!state.config.isConfigured) noTvFound(emptyList())
             return
@@ -500,7 +711,9 @@ class RemoteViewModel(
     private suspend fun useTv(tv: DiscoveredTV) {
         val config = _uiState.value.config
         val updated = config.copy(host = tv.ip, port = tv.port, modelName = tv.model ?: config.modelName)
-        _uiState.update { it.copy(config = updated) }
+        currentAddress = tv.ip to tv.port
+        lastAnsweredAt = null
+        _uiState.update { it.copy(config = updated, notAnswering = false, ipConflict = false) }
         settingsRepo.updateHostAndPort(tv.ip, tv.port)
         tv.model?.let { settingsRepo.updateModelName(it) }
         modelChecked = false
@@ -586,7 +799,13 @@ class RemoteViewModel(
 
     private suspend fun performTurnOn(box: AndroidTvBox) {
         _uiState.update {
-            it.copy(powerState = TVPowerState.TURNING_ON, powerOnError = null, powerOnStep = "Acordando a ${box.name} pelo Wi-Fi…")
+            it.copy(
+                powerState = TVPowerState.TURNING_ON,
+                notAnswering = false,
+                ipConflict = false,
+                powerOnError = null,
+                powerOnStep = "Acordando a ${box.name} pelo Wi-Fi…"
+            )
         }
         haptic.performClick()
         try {
@@ -632,7 +851,15 @@ class RemoteViewModel(
     }
 
     private fun failTurnOn(message: String) {
-        _uiState.update { it.copy(powerState = TVPowerState.OFF, powerOnStep = "", powerOnError = message) }
+        _uiState.update {
+            it.copy(
+                powerState = TVPowerState.OFF,
+                notAnswering = false,
+                ipConflict = false,
+                powerOnStep = "",
+                powerOnError = message
+            )
+        }
         haptic.performError()
     }
 

@@ -62,8 +62,8 @@ private val HeaderButtonBackground = Color(0xFF333338)
 
 /**
  * Cabeçalho: LED, nome da TV e o estado dela (Ligada, Ligada · sem resposta, Ligada · conflito de
- * IP, Desligada, Ligando…, Verificando…), com volume e entrada quando ligada e respondendo; botões
- * do Guia dos botões e dos Ajustes.
+ * IP, Ligada · falta parear, Desligada, Ligando…, Verificando…, ou Celular fora do Wi-Fi), com volume
+ * e entrada quando ligada e respondendo; botões do Guia dos botões e dos Ajustes.
  */
 @Composable
 fun StatusHeader(
@@ -77,7 +77,9 @@ fun StatusHeader(
     onExplain: (ControlHelp) -> Unit,
     modifier: Modifier = Modifier,
     notAnswering: Boolean = false,
-    ipConflict: Boolean = false
+    ipConflict: Boolean = false,
+    offWifi: Boolean = false,
+    needsPairing: Boolean = false
 ) {
     val haptic = LocalHapticFeedback.current
     val explain: (ControlHelp) -> Unit = {
@@ -85,11 +87,17 @@ fun StatusHeader(
         onExplain(it)
     }
     val statusLabel = when {
+        offWifi -> "Celular fora do Wi-Fi"
         powerState == TVPowerState.ON && ipConflict -> "Ligada · conflito de IP"
+        powerState == TVPowerState.ON && needsPairing -> "Ligada · falta parear"
         powerState == TVPowerState.ON && notAnswering -> "Ligada · sem resposta"
         else -> powerState.label()
     }
-    val statusColor = if (powerState == TVPowerState.ON && notAnswering) MutedOrange else powerState.color()
+    val statusColor = when {
+        offWifi -> MutedOrange
+        powerState == TVPowerState.ON && (notAnswering || needsPairing) -> MutedOrange
+        else -> powerState.color()
+    }
 
     Row(
         modifier = modifier
@@ -120,7 +128,7 @@ fun StatusHeader(
                 horizontalArrangement = Arrangement.spacedBy(6.dp)
             ) {
                 val statusHelp = if (ipConflict) Help.ipConflictStatus else Help.notAnsweringStatus
-                val statusModifier = if (powerState == TVPowerState.ON && notAnswering) {
+                val statusModifier = if (!offWifi && powerState == TVPowerState.ON && notAnswering) {
                     Modifier.controlHelp(
                         statusHelp,
                         onClick = { explain(statusHelp) },
@@ -139,7 +147,7 @@ fun StatusHeader(
                     overflow = TextOverflow.Ellipsis,
                     modifier = statusModifier
                 )
-                if (powerState == TVPowerState.ON && !notAnswering) {
+                if (powerState == TVPowerState.ON && !notAnswering && !needsPairing && !offWifi) {
                     Separator()
                     Text(
                         text = if (isMuted) "Mudo" else "Vol $volumeLevel",

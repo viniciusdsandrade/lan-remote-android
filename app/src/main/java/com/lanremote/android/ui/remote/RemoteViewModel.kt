@@ -252,7 +252,7 @@ class RemoteViewModel(
                 }
                 is RoapResult.Refused -> {
                     if (result.httpStatus == 401 || result.httpStatus == 503) {
-                        markAnswered()
+                        markAnswered(needsPairing = result.httpStatus == 401 || _uiState.value.needsPairing)
                         return
                     }
                     if (!relocatedOnce && relocateTvIfDue()) {
@@ -269,6 +269,10 @@ class RemoteViewModel(
                     markNotAnswering(conflict = true)
                 }
                 is RoapResult.Unreachable -> {
+                    if (!tvBoxLink.isOnWifi()) {
+                        markOffWifi()
+                        return
+                    }
                     if (!relocatedOnce && relocateTvIfDue()) {
                         relocatedOnce = true
                         continue
@@ -369,6 +373,11 @@ class RemoteViewModel(
                     locateTv()
                     return
                 }
+                // Fora do Wi-Fi nada da rede de casa responde: nem a busca nem o ping dizem algo da TV.
+                if (!tvBoxLink.isOnWifi()) {
+                    markOffWifi()
+                    return
+                }
                 if (relocateTvIfDue()) return
                 if (epoch != powerEpoch) return
                 when (checkTvPing(_uiState.value.config.host)) {
@@ -381,7 +390,8 @@ class RemoteViewModel(
             }
             is RoapResult.Refused -> {
                 if (volume.httpStatus == 401 || volume.httpStatus == 503) {
-                    markAnswered()
+                    // 401 depois de o cliente tentar a chave salva: só parear de novo resolve.
+                    markAnswered(needsPairing = volume.httpStatus == 401 || _uiState.value.needsPairing)
                 } else {
                     if (_uiState.value.powerState == TVPowerState.TURNING_ON) {
                         refreshBoxAddressIfNeeded()
@@ -467,7 +477,7 @@ class RemoteViewModel(
      * Qualquer resposta ROAP (200, 401 ou 503) prova que a rede da TV está de pé, menos nos primeiros
      * segundos depois de um POWER aceito, quando ela ainda pode responder enquanto desliga.
      */
-    private fun markAnswered() {
+    private fun markAnswered(needsPairing: Boolean = false) {
         val now = clock()
         val shuttingDown = poweredOffAt?.let { now - it < POWER_OFF_GRACE_MILLIS } == true
         if (shuttingDown && _uiState.value.powerState == TVPowerState.OFF) return
@@ -478,7 +488,26 @@ class RemoteViewModel(
                 powerState = TVPowerState.ON,
                 notAnswering = false,
                 ipConflict = false,
+                offWifi = false,
+                needsPairing = needsPairing,
                 powerOnError = null
+            )
+        }
+    }
+
+    /**
+     * O celular saiu do Wi-Fi: a TV não está necessariamente desligada, e mostrar "Desligada" mandava
+     * procurar um problema na TV. O cartão pede para voltar ao Wi-Fi.
+     */
+    private fun markOffWifi() {
+        pendingKeys.clear()
+        _uiState.update {
+            it.copy(
+                powerState = if (it.powerState == TVPowerState.TURNING_ON) it.powerState else TVPowerState.UNKNOWN,
+                offWifi = true,
+                notAnswering = false,
+                ipConflict = false,
+                needsPairing = false
             )
         }
     }
@@ -493,6 +522,7 @@ class RemoteViewModel(
                     powerState = TVPowerState.ON,
                     notAnswering = true,
                     ipConflict = conflict,
+                    offWifi = false,
                     powerOnError = null
                 )
             }
@@ -505,7 +535,7 @@ class RemoteViewModel(
             if (it.powerState == TVPowerState.TURNING_ON) {
                 it
             } else {
-                it.copy(powerState = TVPowerState.OFF, notAnswering = false, ipConflict = false)
+                it.copy(powerState = TVPowerState.OFF, notAnswering = false, ipConflict = false, offWifi = false, needsPairing = false)
             }
         }
     }
@@ -564,7 +594,9 @@ class RemoteViewModel(
                         config = updated,
                         powerState = TVPowerState.ON,
                         notAnswering = false,
-                        ipConflict = false
+                        ipConflict = false,
+                        offWifi = false,
+                        needsPairing = false
                     )
                 }
                 haptic.performSuccess()
@@ -596,7 +628,7 @@ class RemoteViewModel(
             }
             settingsRepo.saveConfig(updated)
             _uiState.update {
-                if (addressChanged) it.copy(config = updated, notAnswering = false, ipConflict = false)
+                if (addressChanged) it.copy(config = updated, notAnswering = false, ipConflict = false, needsPairing = false)
                 else it.copy(config = updated)
             }
             checkTv()
@@ -635,7 +667,7 @@ class RemoteViewModel(
                 modelChecked = false
             }
             settingsRepo.saveConfig(updated)
-            _uiState.update { it.copy(config = updated, notAnswering = false, ipConflict = false) }
+            _uiState.update { it.copy(config = updated, notAnswering = false, ipConflict = false, needsPairing = false) }
             checkTv()
         }
     }
@@ -687,7 +719,7 @@ class RemoteViewModel(
         val last = lastTvSearch
         if (last != null && now - last < tvSearchIntervalMillis(state)) return
         if (!tvBoxLink.isOnWifi()) {
-            if (!state.config.isConfigured) noTvFound(emptyList())
+            if (!state.config.isConfigured) markOffWifi()
             return
         }
         lastTvSearch = now
@@ -713,7 +745,7 @@ class RemoteViewModel(
         val updated = config.copy(host = tv.ip, port = tv.port, modelName = tv.model ?: config.modelName)
         currentAddress = tv.ip to tv.port
         lastAnsweredAt = null
-        _uiState.update { it.copy(config = updated, notAnswering = false, ipConflict = false) }
+        _uiState.update { it.copy(config = updated, notAnswering = false, ipConflict = false, needsPairing = false) }
         settingsRepo.updateHostAndPort(tv.ip, tv.port)
         tv.model?.let { settingsRepo.updateModelName(it) }
         modelChecked = false

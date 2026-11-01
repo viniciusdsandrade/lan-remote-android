@@ -43,12 +43,14 @@ import com.lanremote.android.ui.components.CircularDPad
 import com.lanremote.android.ui.components.ColorButtonsRow
 import com.lanremote.android.ui.components.MediaControlsRow
 import com.lanremote.android.ui.components.NumericKeypad
+import com.lanremote.android.ui.components.PairingBanner
 import com.lanremote.android.ui.components.PowerBanner
 import com.lanremote.android.ui.components.RemoteButton
 import com.lanremote.android.ui.components.RemoteSection
 import com.lanremote.android.ui.components.RockerSwitch
 import com.lanremote.android.ui.components.StatusHeader
 import com.lanremote.android.ui.components.TurnOnGreen
+import com.lanremote.android.ui.components.WifiBanner
 import com.lanremote.android.ui.components.tvDisplayName
 import com.lanremote.android.ui.help.ButtonGuideSheet
 import com.lanremote.android.ui.help.ControlHelp
@@ -119,6 +121,8 @@ fun RemoteScreen(
             powerState = uiState.powerState,
             notAnswering = uiState.notAnswering,
             ipConflict = uiState.ipConflict,
+            offWifi = uiState.offWifi,
+            needsPairing = uiState.needsPairing,
             volumeLevel = uiState.status.volumeLevel,
             isMuted = uiState.status.isMuted,
             inputSource = uiState.status.inputSource,
@@ -135,8 +139,22 @@ fun RemoteScreen(
                 .padding(horizontal = 16.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
+            // Celular fora do Wi-Fi: o problema está no celular, não na TV.
+            AnimatedVisibility(visible = uiState.offWifi, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
+                WifiBanner(attentionPulse = uiState.attentionPulse)
+            }
+
+            // A TV respondeu, mas recusa o app: o cartão leva ao pareamento.
+            AnimatedVisibility(
+                visible = !uiState.offWifi && !uiState.isTvAsleep && uiState.needsPairing,
+                enter = fadeIn() + expandVertically(),
+                exit = fadeOut() + shrinkVertically()
+            ) {
+                PairingBanner(onOpenSettings = { viewModel.openSettings() })
+            }
+
             // Com a TV desligada: por que o controle está esmaecido e como ligá-la.
-            AnimatedVisibility(visible = uiState.isTvAsleep, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
+            AnimatedVisibility(visible = !uiState.offWifi && uiState.isTvAsleep, enter = fadeIn() + expandVertically(), exit = fadeOut() + shrinkVertically()) {
                 PowerBanner(
                     turningOn = uiState.powerState == TVPowerState.TURNING_ON,
                     box = uiState.box,
@@ -153,7 +171,7 @@ fun RemoteScreen(
             NumericKeypad(isVisible = uiState.isKeypadVisible, onKey = sendKey, onExplain = explain)
 
             Column(
-                modifier = Modifier.alpha(if (uiState.isTvAsleep) 0.45f else 1f),
+                modifier = Modifier.alpha(if (uiState.isRemoteUnavailable) 0.45f else 1f),
                 verticalArrangement = Arrangement.spacedBy(14.dp)
             ) {
                 RemoteSection(title = "Navegação") {

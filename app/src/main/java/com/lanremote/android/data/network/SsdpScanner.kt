@@ -10,8 +10,6 @@ import kotlinx.coroutines.withContext
 import java.net.DatagramPacket
 import java.net.DatagramSocket
 import java.net.InetAddress
-import java.net.InetSocketAddress
-import java.net.Socket
 
 data class DiscoveredTV(
     val ip: String,
@@ -96,7 +94,7 @@ class SsdpScanner(
             if (byUdap.isNotEmpty()) return@withContext byUdap
         }
 
-        // 3. Fallback: varredura da sub-rede na porta 8080 (caso o roteador bloqueie multicast/SSDP)
+        // 3. Fallback: varredura da rede do Wi-Fi na porta 8080 (caso o roteador bloqueie multicast/SSDP)
         confirm(scanSubnetForPort8080())
     }
 
@@ -159,52 +157,12 @@ class SsdpScanner(
         found.distinct()
     }
 
-    /** Endereços da sub-rede do Wi-Fi com a porta 8080 aberta. */
-    private suspend fun scanSubnetForPort8080(): List<String> = withContext(Dispatchers.IO) {
-        val localIp = getLocalIpAddress() ?: return@withContext emptyList()
-        val parts = localIp.split(".")
-        if (parts.size != 4) return@withContext emptyList()
-
-        val prefix = "${parts[0]}.${parts[1]}.${parts[2]}"
-
-        coroutineScope {
-            (1..254).map { hostNum ->
-                async {
-                    val targetIp = "$prefix.$hostNum"
-                    if (targetIp != localIp && isPortOpen(targetIp, ROAP_PORT, 200)) targetIp else null
-                }
-            }.awaitAll().filterNotNull()
-        }
-    }
-
-    private fun isPortOpen(ip: String, port: Int, timeoutMillis: Int): Boolean {
-        return try {
-            Socket().use { socket ->
-                socket.connect(InetSocketAddress(ip, port), timeoutMillis)
-                true
-            }
-        } catch (e: Exception) {
-            false
-        }
-    }
-
-    private fun getLocalIpAddress(): String? {
-        try {
-            val interfaces = java.net.NetworkInterface.getNetworkInterfaces() ?: return null
-            for (intf in interfaces) {
-                if (intf.isLoopback || !intf.isUp) continue
-                for (addr in intf.inetAddresses) {
-                    if (!addr.isLoopbackAddress && addr is java.net.Inet4Address) {
-                        val host = addr.hostAddress
-                        if (host != null && (host.startsWith("192.168.") || host.startsWith("10.") || host.startsWith("172."))) {
-                            return host
-                        }
-                    }
-                }
-            }
-        } catch (ignored: Exception) {}
-        return null
-    }
+    /**
+     * Endereços da rede do Wi-Fi com a porta 8080 aberta: as redes vêm de [LocalNetworks] (o Wi-Fi,
+     * não os dados móveis nem uma VPN).
+     */
+    private suspend fun scanSubnetForPort8080(): List<String> =
+        LocalNetworks.hostsAccepting(LocalNetworks.sweepHosts(LocalNetworks.deviceNetworks()), ROAP_PORT)
 }
 
 /** A parte da busca que não depende da rede: confirmar os candidatos e escolher a TV. */

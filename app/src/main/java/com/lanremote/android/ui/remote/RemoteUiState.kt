@@ -24,6 +24,10 @@ data class RemoteUiState(
     val notAnswering: Boolean = false,
     /** Outro aparelho na rede respondeu no mesmo IP da TV logo depois de ela estar ativa ali. */
     val ipConflict: Boolean = false,
+    /** O celular está fora do Wi-Fi: nada da rede de casa responde, então o estado da TV é desconhecido. */
+    val offWifi: Boolean = false,
+    /** A TV responde, mas recusa o app (HTTP 401) e a chave salva, se houver, não serve mais. */
+    val needsPairing: Boolean = false,
     val status: TVStatus = TVStatus(),
     /** Sobe a cada tecla apertada com a TV desligada: a tela aponta o caminho para ligá-la. */
     val attentionPulse: Int = 0,
@@ -50,7 +54,7 @@ data class RemoteUiState(
 ) {
     /** Teclas só vão para a TV ligada (ou enquanto a primeira consulta não terminou), e só com endereço. */
     val canSendKeys: Boolean
-        get() = config.isConfigured && (powerState == TVPowerState.ON || powerState == TVPowerState.UNKNOWN)
+        get() = config.isConfigured && !offWifi && (powerState == TVPowerState.ON || powerState == TVPowerState.UNKNOWN)
 
     /** Com a TV Box pareada o app consegue ligar a TV. */
     val canTurnOnTv: Boolean
@@ -59,4 +63,8 @@ data class RemoteUiState(
     /** A TV não recebe teclas agora: o controle fica esmaecido e o cartão mostra como ligá-la. */
     val isTvAsleep: Boolean
         get() = powerState == TVPowerState.OFF || powerState == TVPowerState.TURNING_ON
+
+    /** Nenhuma tecla sai do celular agora: TV desligada ou celular fora do Wi-Fi. O controle fica esmaecido. */
+    val isRemoteUnavailable: Boolean
+        get() = isTvAsleep || offWifi
 }

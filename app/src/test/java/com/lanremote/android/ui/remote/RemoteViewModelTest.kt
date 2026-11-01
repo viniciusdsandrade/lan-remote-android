@@ -124,6 +124,61 @@ class RemoteViewModelTest {
     }
 
     @Test
+    fun aRefusalTheSavedKeyCantFix_asksForPairingInsteadOfFailingQuietly() = runTest(testDispatcher) {
+        // O cliente já tentou a chave salva: um 401 que sobra só se resolve pareando de novo.
+        coEvery { tvClient.getVolumeInfo(any()) } returns RoapResult.Refused(401)
+        coEvery { tvClient.getCurrentChannel(any()) } returns RoapResult.Refused(401)
+
+        val viewModel = newViewModel()
+        assertEquals(TVPowerState.ON, viewModel.uiState.value.powerState)
+        assertTrue(viewModel.uiState.value.needsPairing)
+        assertFalse(viewModel.uiState.value.notAnswering)
+
+        coEvery { tvClient.getVolumeInfo(any()) } returns RoapResult.Ok(volume)
+        viewModel.refreshStatus()
+        advanceUntilIdle()
+        assertFalse(viewModel.uiState.value.needsPairing)
+    }
+
+    @Test
+    fun offWifi_isNotShownAsTheTvOff() = runTest(testDispatcher) {
+        every { tvBoxLink.isOnWifi() } returns false
+        coEvery { tvClient.getVolumeInfo(any()) } returns noAnswer
+
+        val viewModel = newViewModel()
+        val state = viewModel.uiState.value
+        assertTrue(state.offWifi)
+        assertEquals("fora do Wi-Fi o estado da TV é desconhecido", TVPowerState.UNKNOWN, state.powerState)
+        assertFalse(state.canSendKeys)
+        assertTrue(state.isRemoteUnavailable)
+        coVerify(exactly = 0) { ssdpScanner.discoverTVs(any()) }
+        coVerify(exactly = 0) { tvClient.answersPing(any(), any()) }
+
+        viewModel.sendKey(TVKey.VOLUME_UP)
+        advanceUntilIdle()
+        coVerify(exactly = 0) { tvClient.sendCommand(any(), any()) }
+
+        every { tvBoxLink.isOnWifi() } returns true
+        coEvery { tvClient.getVolumeInfo(any()) } returns RoapResult.Ok(volume)
+        viewModel.refreshStatus()
+        advanceUntilIdle()
+        assertFalse(viewModel.uiState.value.offWifi)
+        assertEquals(TVPowerState.ON, viewModel.uiState.value.powerState)
+    }
+
+    @Test
+    fun firstUseOffWifi_saysSoInsteadOfNotFindingTheTv() = runTest(testDispatcher) {
+        every { settingsRepo.tvConfigFlow } returns flowOf(TVConfig())
+        every { tvBoxLink.isOnWifi() } returns false
+
+        val viewModel = newViewModel()
+
+        assertTrue(viewModel.uiState.value.offWifi)
+        assertNull(viewModel.uiState.value.powerOnError)
+        coVerify(exactly = 0) { ssdpScanner.discoverTVs(any()) }
+    }
+
+    @Test
     fun sendKey_sendsTheKeyWithTheSavedSession() = runTest(testDispatcher) {
         val viewModel = newViewModel()
 
